@@ -120,11 +120,11 @@ ul.obj{margin:6px 0;padding-left:18px;font-size:13px;line-height:1.5}
 .hb.on{background:linear-gradient(180deg,rgba(255,210,63,.85),rgba(200,120,0,.85));color:#2a1a00;border-color:#ffe28a}
 .hb.hot{background:linear-gradient(180deg,rgba(61,255,176,.85),rgba(10,150,100,.85));color:#00261a;border-color:#9dffd6;animation:pulse 1s infinite}
 @keyframes pulse{50%{box-shadow:0 0 0 6px rgba(61,255,176,.25)}}
-#hudPause{position:fixed;top:calc(env(safe-area-inset-top) + 10px);right:calc(env(safe-area-inset-right) + 10px);width:42px;height:42px;border-radius:12px;background:rgba(6,22,48,.65);border:1.5px solid rgba(160,230,255,.45);z-index:4;display:flex;align-items:center;justify-content:center;gap:5px;cursor:pointer}
+#hudPause{position:fixed;top:calc(env(safe-area-inset-top) + 8px);right:calc(env(safe-area-inset-right) + 8px);width:48px;height:48px;border-radius:12px;background:rgba(6,22,48,.65);border:1.5px solid rgba(160,230,255,.45);z-index:4;display:flex;align-items:center;justify-content:center;gap:5px;cursor:pointer}
 #hudPause i{display:block;width:6px;height:18px;border-radius:2px;background:#fff}
 #toast{position:fixed;left:50%;top:22%;transform:translateX(-50%);background:rgba(6,22,48,.88);border:1.5px solid rgba(160,230,255,.45);border-radius:14px;padding:9px 16px;font-weight:900;font-size:15px;z-index:6;pointer-events:none;opacity:0;transition:opacity .3s;max-width:90vw;text-align:center}
 #toast.show{opacity:1}
-#rotHint{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);background:rgba(0,0,0,.6);padding:6px 12px;border-radius:999px;font-size:12px;font-weight:800;z-index:7;pointer-events:none}
+#rotHint{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 64px);transition:opacity .6s;transform:translateX(-50%);background:rgba(0,0,0,.6);padding:6px 12px;border-radius:999px;font-size:12px;font-weight:800;z-index:7;pointer-events:none}
 #scrLoad{justify-content:center;background:radial-gradient(ellipse at 50% 40%,#123d6e,#030c1c)}
 .loadBar{width:240px;height:8px;border-radius:5px;background:rgba(255,255,255,.12);overflow:hidden}.loadBar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#38d6ff,#ffd23f);transition:width .2s}
 #noGL{justify-content:center;text-align:center}
@@ -262,6 +262,7 @@ ul.obj{margin:6px 0;padding-left:18px;font-size:13px;line-height:1.5}
   <div class="adslot" aria-hidden="true"></div>
 </div>
 <div id="toast"></div>
+<div id="safeProbe" style="position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)"></div>
 <div id="rotHint" class="hidden">↻ Landscape recommended</div>
 <script>
 'use strict';
@@ -399,7 +400,7 @@ const AU = (() => {
   let ctx = null, master, sfxG, musG, engG, noiseBuf, ready = false;
   let eng = null, wind = null, rain = null, horn = null, musTimer = 0, musStep = 0, musNext = 0, musOn = false, mood = 'menu';
   function init() {
-    if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
+    if (ctx) { if (ctx.state !== 'running' && ctx.state !== 'closed') ctx.resume().catch(() => { }); return; }
     try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
     master = ctx.createGain(); master.connect(ctx.destination);
     const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4; comp.connect(master);
@@ -438,10 +439,13 @@ const AU = (() => {
   }
   // per-frame engine update. st={type:'prop'|'jet', thr, rpm, spd, ab, on, inside, warn}
   let hornT = 0;
+  let upAcc = 0;
   function update(st, dt) {
     if (!ready || !eng) return;
+    upAcc += dt; if (upAcc < 0.045) return; dt = upAcc; upAcc = 0; // ~20 Hz is plenty for smooth engine sound and keeps the audio thread light
+
     const t = ctx.currentTime, k = 0.06;
-    const on = st.on ? 1 : 0, vol = (st.inside ? 0.55 : 0.9) * on;
+    const on = st.on && !st.paused ? 1 : 0, vol = (st.inside ? 0.55 : 0.9) * on;
     engG.gain.setTargetAtTime(vol * 0.5, t, 0.15);
     if (st.type === 'prop') {
       const f = 34 + st.rpm * 62;
@@ -1484,29 +1488,41 @@ function acAttitude(ac) {
 function assistControls(ac, stick, assist, dt) {
   const d = ac.d, ctl = { pitch: 0, roll: 0, yaw: stick.yaw || 0 };
   const V = Math.max(ac.V, 1), eff = clamp(V / d.Vs, 0.25, 1.35);
-  if (!assist || ac.onGround) { ctl.pitch = stick.y; ctl.roll = stick.x; return ctl; }
-  // full deflection held => rate mode (allows loops & rolls), otherwise attitude hold
-  ac.rollT = Math.abs(stick.x) > 0.88 ? ac.rollT + dt : 0;
-  ac.pitchT = Math.abs(stick.y) > 0.88 ? ac.pitchT + dt : 0;
+  const vse = d.Vs / Math.sqrt(1 + ac.flapsPos * 0.22);
+  if (!assist) { ctl.pitch = stick.y; ctl.roll = stick.x; return ctl; }
+  if (ac.onGround) { // assisted ground roll: steer with the stick, gentle auto-rotation if the player forgets to pull
+    ctl.pitch = stick.y; ctl.roll = stick.x;
+    if (!ac.water && ac.engineOn && ac.thr > 0.6 && stick.y < 0.3 && ac.V > vse * 1.2) ctl.pitch = Math.max(ctl.pitch, clamp((ac.V - vse * 1.2) / (vse * 0.15), 0.25, 0.6));
+    ac.rollT = ac.pitchT = 0; return ctl;
+  }
+  // stunt (rate) mode: only where stunts make sense (stunt stages / free flight), well above the ground, not from tilt
+  const danger = ac.agl < 70 || ac.agl < -ac.vel[1] * 4; // ground getting close: stunt helpers switch off and the assist pulls out
+  const stuntOK = !!stick.stunt && !stick.tilt && !danger;
+  ac.rollT = stuntOK && Math.abs(stick.x) > 0.88 ? ac.rollT + dt : 0;
+  ac.pitchT = stuntOK && Math.abs(stick.y) > 0.88 && (ac.pitchT > 0 || V > d.Vs * 1.3) ? ac.pitchT + dt : 0;
   const bank = ac.bank, inverted = Math.abs(bank) > PI / 2;
-  const extreme = Math.abs(bank) > 60 * DEG; if (!extreme) ac.holdT = 0;
+  const extreme = Math.abs(bank) > 60 * DEG; if (!extreme || !stick.stunt) ac.holdT = 0;
   if (ac.rollT > 0.45 || ac.pitchT > 0.35) { ctl.roll = stick.x; ac.holdT = 0; }
-  else if (extreme && Math.abs(stick.x) < 0.15 && (ac.holdT || 0) < 4.5) {
+  else if (stick.stunt && !danger && extreme && Math.abs(stick.x) < 0.15 && (ac.holdT || 0) < 4.5) {
     if (!ac.holdT) { const ab = Math.abs(bank), sg = Math.sign(bank) || 1; ac.holdB = Math.abs(ab - PI / 2) < 0.45 ? sg * PI / 2 : ab > PI - 0.5 ? sg * PI : bank; }
     ac.holdT = (ac.holdT || 0) + dt; ctl.roll = clamp(wrapPI(ac.holdB - bank) * 3 / (d.roll * eff), -1, 1); }
   else {
-    const tb = stick.x * 58 * DEG; let err = wrapPI(tb - bank);
+    const tb = stick.x * (stick.stunt ? 58 : 64) * DEG * (ac.agl < 25 ? clamp(ac.agl / 25, 0.35, 1) : 1); let err = wrapPI(tb - bank);
     ctl.roll = clamp(err * 2.6 / (d.roll * eff), -1, 1);
   }
   const sp = Math.hypot(ac.vel[0], ac.vel[1], ac.vel[2]) || 1, gam = Math.asin(clamp(ac.vel[1] / sp, -1, 1));
-  if (ac.pitchT > 0.35 || inverted) { const ay = (ac.alpha || 0) * Math.sign(stick.y); ctl.pitch = stick.y * (inverted && ac.pitchT <= 0.35 ? 0.6 : 1) * clamp(1 - (ay - ASTALL * 0.7) / (ASTALL * 0.22), 0, 1); }
+  if (ac.pitchT > 0.35 || (inverted && stick.stunt && !danger)) { const ay = (ac.alpha || 0) * Math.sign(stick.y); ctl.pitch = stick.y * (inverted && ac.pitchT <= 0.35 ? 0.6 : 1) * clamp(1 - (ay - ASTALL * 0.7) / (ASTALL * 0.22), 0, 1); }
   else {
     let tg = stick.y * 22 * DEG;
-    const vse = d.Vs / Math.sqrt(1 + ac.flapsPos * 0.22);
-    const vp = ac.agl < 12 ? 0.95 : 1.0, vw = ac.agl < 12 ? 0.08 : 0.18;
-    if (V < vse * (vp + vw)) tg = Math.min(tg, lerp(-6 * DEG, tg, clamp((V - vse * vp) / (vse * vw), 0, 1))); // stall protection (relaxed in the flare)
-    if (ac.agl < 30 && !ac.gearDown && false) tg = Math.max(tg, 0);
+    if (Math.abs(stick.y) < 0.12 && ac.agl < 60 && ac.thr > 0.6 && ac.liftT !== undefined && ac.t - ac.liftT < 20) tg = Math.max(tg, 6 * DEG); // initial climb after take-off
+    const vp = ac.agl < 12 ? 0.95 : 1.02, vw = ac.agl < 12 ? 0.1 : 0.26;
+    if (V < vse * (vp + vw)) tg = Math.min(tg, lerp(-10 * DEG, tg, clamp((V - vse * vp) / (vse * vw), 0, 1))); // stall protection (relaxed in the flare)
+    // ground-proximity / flare assist: limit the sink rate close to the ground
+    if (ac.agl < 90 && !inverted) { const vsMin = -(ac.agl * 0.2 + 1.5); tg = Math.max(tg, Math.asin(clamp(vsMin / V, -1, 0))); }
     ctl.pitch = clamp((tg - gam) * (ac.agl < 40 ? 5.5 : 3.6) / (d.pitch * eff) + (stick.y * 0.15), -1, 1);
+    // alpha limiter (never pull into a stall in assisted mode)
+    const am = ASTALL * 0.86; if (ac.alpha > am) ctl.pitch = Math.min(ctl.pitch, -(ac.alpha - am) * 10);
+    if (inverted) ctl.pitch = 0; // upside down (non-stunt): just roll upright, the auto-trim holds the nose
   }
   return ctl;
 }
@@ -1575,9 +1591,9 @@ function stepAircraft(ac, ctl, env, dt) {
     if (!ac.onGround) { const res = touchdown(ac, env); if (ac.crashed) return res; }
     ac.onGround = true;
     groundRoll(ac, ctl, env, dt, surf, gOff, f);
-  } else if (ac.onGround && ac.agl > 0.4) { ac.onGround = false; env.onLiftoff && env.onLiftoff(ac); }
+  } else if (ac.onGround && ac.agl > 0.4) { ac.onGround = false; ac.liftT = ac.t; env.onLiftoff && env.onLiftoff(ac); }
   else if (ac.onGround && ac.agl > 0) { // tiny hop: keep glued unless climbing
-    if (ac.vel[1] < 0.5) { ac.pos[1] = surf + gOff; groundRoll(ac, ctl, env, dt, surf, gOff, f); } else { ac.onGround = false; env.onLiftoff && env.onLiftoff(ac); }
+    if (ac.vel[1] < 0.5) { ac.pos[1] = surf + gOff; groundRoll(ac, ctl, env, dt, surf, gOff, f); } else { ac.onGround = false; ac.liftT = ac.t; env.onLiftoff && env.onLiftoff(ac); }
   }
   // obstacles
   if (!ac.crashed) { const b = hitBuilding(ac.pos, 3); if (b) crash(ac, env, 'Hit a building'); }
@@ -1592,14 +1608,14 @@ function touchdown(ac, env) {
   const rw = onRunway(ac.pos[0], ac.pos[2]);
   const n = groundN(ac.pos[0], ac.pos[2]);
   const hsp = Math.hypot(ac.vel[0], ac.vel[2]);
-  const tol = d.crashVs * (env.assist ? 1.3 : 1);
+  const tol = d.crashVs * (env.assist ? 1.5 : 1);
   const belly = d.retract && ac.gearPos < 0.5;
   let why = null;
   if (ac.water && !d.floats) why = belly || hsp > 8 ? 'Ditched in the water' : null;
   if (!why && ac.water && !d.floats) why = 'Ditched in the water';
   if (!why && vs > tol * (belly ? 0.7 : 1)) why = 'Impact too hard (' + Math.round(vs * 196.85) + ' fpm)';
   if (!why && bankA > (env.assist ? 0.5 : 0.38)) why = 'Wingtip strike';
-  if (!why && pitch < -0.2) why = 'Nose-first impact';
+  if (!why && pitch < (env.assist ? -0.3 : -0.2)) why = 'Nose-first impact';
   if (!why && !ac.water && !rw && n[1] < 0.93 && hsp > 6) why = 'Crashed into terrain';
   if (!why && !ac.water && !rw && hsp > d.Vs * 2.4) why = 'Too fast for rough ground';
   if (!why && d.floats && !ac.water && !rw && hsp > d.Vs * 1.8) why = 'Crashed into terrain';
@@ -1700,7 +1716,8 @@ function botLand(ac, ap, dir, dt, st) {
   let tg = -3.2 * DEG + clamp((gsAlt - ac.pos[1]) * 0.006, -0.08, 0.08);
   const agl = ac.agl;
   const vapp = vse * 1.32;
-  const fH = Math.max(14, ac.V * 0.45);
+  const fH = ac.engineOn ? Math.max(14, ac.V * 0.45) : 8;
+  if (!ac.engineOn) { ac.flaps = Math.min(ac.flaps, 1); if (agl >= fH) { stick.y = clamp((ac.V - d.Vs * 1.4) * 0.08, -0.6, 0.4); return stick; } } // dead stick: keep flying speed until the flare
   if (agl < fH) { tg = lerp(-0.5 * DEG, tg, clamp((agl - 1.5) / (fH - 1.5), 0, 1)); ac.thr = agl > 2 && ac.V < vse * 1.12 ? Math.min(1, ac.thr + dt * 1.2) : Math.max(0, ac.thr - dt * (agl < 4 ? 0.6 : 0.25)); }
   else ac.thr = clamp(ac.thr + (vapp - ac.V) * 0.05 * dt * 10, 0, 1);
   stick.y = clamp(tg / (22 * DEG), -0.95, 0.95);
@@ -1766,13 +1783,14 @@ function bbQuad(p, s, c, a, cell, cr, cu, rot, stretch) {
   const [u0, v0] = CELLS[cell], u1 = u0 + 0.5, v1 = v0 + 0.5;
   let rx = cr[0] * s, ry = cr[1] * s, rz = cr[2] * s, ux = cu[0] * s * (stretch || 1), uy = cu[1] * s * (stretch || 1), uz = cu[2] * s * (stretch || 1);
   if (rot) { const cs = Math.cos(rot), sn = Math.sin(rot); const ax = rx * cs + ux * sn, ay = ry * cs + uy * sn, az = rz * cs + uz * sn; ux = ux * cs - rx * sn; uy = uy * cs - ry * sn; uz = uz * cs - rz * sn; rx = ax; ry = ay; rz = az; }
-  const V = [[p[0] - rx - ux, p[1] - ry - uy, p[2] - rz - uz, u0, v1], [p[0] + rx - ux, p[1] + ry - uy, p[2] + rz - uz, u1, v1], [p[0] + rx + ux, p[1] + ry + uy, p[2] + rz + uz, u1, v0], [p[0] - rx + ux, p[1] - ry + uy, p[2] - rz + uz, u0, v0]];
-  const idx = [0, 1, 2, 0, 2, 3]; let k = o;
-  for (const i of idx) { const v = V[i]; b[k++] = v[0]; b[k++] = v[1]; b[k++] = v[2]; b[k++] = v[3]; b[k++] = v[4]; b[k++] = c[0]; b[k++] = c[1]; b[k++] = c[2]; b[k++] = a; }
+  // write the 6 vertices directly (no per-quad array allocations: this runs for thousands of particles per frame)
+  const c0 = c[0], c1 = c[1], c2 = c[2]; let k = o;
+  const put = (sx, sy, u, v) => { b[k++] = p[0] + sx * rx + sy * ux; b[k++] = p[1] + sx * ry + sy * uy; b[k++] = p[2] + sx * rz + sy * uz; b[k++] = u; b[k++] = v; b[k++] = c0; b[k++] = c1; b[k++] = c2; b[k++] = a; };
+  put(-1, -1, u0, v1); put(1, -1, u1, v1); put(1, 1, u1, v0); put(-1, -1, u0, v1); put(1, 1, u1, v0); put(-1, 1, u0, v0);
 }
 function flushBB(add) {
   if (!BBN) return; const s = curProg;
-  gl.bindBuffer(gl.ARRAY_BUFFER, FX.vb); gl.bufferData(gl.ARRAY_BUFFER, FX.buf.subarray(0, BBN * 54), gl.DYNAMIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, FX.vb); if (!FX.alloc) { gl.bufferData(gl.ARRAY_BUFFER, FX.buf.byteLength, gl.DYNAMIC_DRAW); FX.alloc = 1; } gl.bufferSubData(gl.ARRAY_BUFFER, 0, FX.buf.subarray(0, BBN * 54));
   const st = 36; gl.enableVertexAttribArray(s.a.aPos); gl.vertexAttribPointer(s.a.aPos, 3, gl.FLOAT, false, st, 0);
   gl.enableVertexAttribArray(s.a.aUV); gl.vertexAttribPointer(s.a.aUV, 2, gl.FLOAT, false, st, 12);
   gl.enableVertexAttribArray(s.a.aCol); gl.vertexAttribPointer(s.a.aCol, 4, gl.FLOAT, false, st, 20);
@@ -1870,7 +1888,7 @@ function updateCamera(S, dt) {
     const k = ac.onGround ? 6 : 4.2;
     R3.camQ = qslerp(R3.camQ, ac.q, 1 - Math.exp(-k * dt));
     // keep the camera horizon partly level for comfort
-    const dist = d.cam * (S.zoom || 1), off = qrot(R3.camQ, [0, dist * 0.26, dist]);
+    const dist = d.cam * (S.zoom || 1) * (R3.H > R3.W ? 1.15 : 1), off = qrot(R3.camQ, [0, dist * 0.26, dist]);
     let p = vadd(ac.pos, off);
     const gmin = surfaceH(p[0], p[2]) + 2; if (p[1] < gmin) p[1] = gmin;
     R3.cam = p;
@@ -1896,6 +1914,7 @@ function updateCamera(S, dt) {
     fov = clamp(2 * Math.atan(d.cam * 1.2 / Math.max(vdist(cn.p, ac.pos), 1)) / DEG, 12, 60);
   }
   if (R3.shake > 0) { R3.shake = Math.max(0, R3.shake - dt * 1.5); const s = R3.shake * (SAVE.set.shake ? 1 : 0.2), t = now() * 40; R3.view[12] += Math.sin(t) * s * 0.4; R3.view[13] += Math.cos(t * 1.3) * s * 0.4; }
+  if (R3.H > R3.W) fov += mode === 1 ? 18 : 24; // portrait: widen the view so the plane doesn't fill the screen
   R3.fov = damp(R3.fov, fov, 3, dt);
 }
 function setupFrame(env, time) {
@@ -2257,7 +2276,7 @@ class MissionRun {
       case 'drop': return { text: `Drop supplies ${s.tg.filter(t => t.hit).length}/${s.tg.length}`, sub: 'Press DROP before you reach the target. Crates fall forward!' };
       case 'fire': return { text: `Put out the fires ${s.fs.filter(f => f.hp <= 0).length}/${s.fs.length}`, sub: this.S.ac.tank > 0.45 ? 'Tank full: press DROP over the flames!' : 'Skim the sea surface fast to scoop water' };
       case 'pickup': return { text: 'Rescue the crew', sub: s.hold > 0 ? 'Picking up survivors…' : 'Land on the water next to the boat and stop' };
-      case 'stunts': return { text: 'Stunts: ' + s.list.map((k, i) => (s.got[i] ? '✔' : '') + STUNT_NAMES[k]).join(' · '), sub: 'Hold the stick fully to roll or loop' };
+      case 'stunts': return { text: 'Stunts: ' + s.list.map((k, i) => (s.got[i] ? '✔' : '') + STUNT_NAMES[k]).join(' · '), sub: 'Hold the stick fully: up = loop, sideways = roll' };
       case 'lowpass': return { text: 'Low pass over the runway', sub: `Below ${Math.round(s.maxAgl * 3.28)} ft, faster than ${Math.round(s.minSpd * 1.94)} kt` };
       case 'free': return { text: `Free Flight · ★ ${Object.keys(SAVE.collect).length}/30`, sub: 'Find golden stars, do stunts, land anywhere' };
     }
@@ -2316,6 +2335,7 @@ class MissionRun {
         if (ac.onGround && ac.V < 3 && this.lastTD && !this.landedOK) {
           const td = this.lastTD; const ok = s.t === 'water' ? td.water && this.inSeabase(ac.pos) : (s.any ? !!onRunway(ac.pos[0], ac.pos[2]) : (onRunway(ac.pos[0], ac.pos[2]) === APT(s.apt) || (() => { const ap = APT(s.apt), [a, b] = rwLocal(ap, ac.pos[0], ac.pos[2]); return Math.abs(a) < ap.len / 2 + 150 && Math.abs(b) < Math.max(ap.wid * 3, 90); })()));
           if (ok && (!td.belly || s.belly)) { this.landedOK = 1; const sc = this.scoreLanding(td, s); this.score += sc; S.landingResult(td, sc); this.next(); }
+          else if (!ok && ac.V < 1 && !ac.engineOn && !ac.water) { this.finish(false, 'Landed off the runway (no engine to take off again)'); }
           else if (!ok && ac.V < 1) { if (!this.wrongWarn) { this.wrongWarn = 1; S.toast(s.t === 'water' ? 'Land between the buoys!' : 'Wrong place! Take off and land at ' + APT(s.apt).name); } }
         }
         if (!ac.onGround) { this.landedOK = 0; if (ac.agl > 60) this.wrongWarn = 0; }
@@ -2399,7 +2419,7 @@ function vdist2(a, b) { return Math.hypot(a[0] - b[0], a[2] - b[2]) + Math.max(0
 let hx = null, HCV = null, HW = 1, HH = 1, HDPR = 1;
 const IN = { stick: { id: null, bx: 0, by: 0, x: 0, y: 0, vx: 0, vy: 0 }, thr: { id: null }, keys: {}, tilt: { on: false, x: 0, y: 0, raw: [0, 0] }, look: { id: null } };
 const POPS = []; let rainDrops = [];
-function hudResize() { HDPR = Math.min(devicePixelRatio || 1, 2); HCV.width = Math.round(HW * HDPR); HCV.height = Math.round(HH * HDPR); }
+function hudResize() { readSafe(); HDPR = Math.min(devicePixelRatio || 1, 2); HCV.width = Math.round(HW * HDPR); HCV.height = Math.round(HH * HDPR); }
 function rr(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
 function glass(c, x, y, w, h, r, a = 0.55) {
   rr(c, x, y, w, h, r); const g = c.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, `rgba(20,44,80,${a})`); g.addColorStop(1, `rgba(4,14,32,${a + 0.1})`); c.fillStyle = g; c.fill();
@@ -2412,10 +2432,14 @@ function txt(c, s, x, y, sz, col = '#fff', al = 'center', wt = 800, sh = true) {
 }
 function pop(s, col) { POPS.push({ s, col: col || '#fff', t: 0 }); if (POPS.length > 6) POPS.shift(); }
 const KT = 1.94384, FT = 3.28084;
+const SAFE = { l: 0, r: 0, t: 0, b: 0 };
+function readSafe() { const el = document.getElementById('safeProbe'); if (!el) return; const cs = getComputedStyle(el); SAFE.t = parseFloat(cs.paddingTop) || 0; SAFE.r = parseFloat(cs.paddingRight) || 0; SAFE.b = parseFloat(cs.paddingBottom) || 0; SAFE.l = parseFloat(cs.paddingLeft) || 0; }
 function layout() {
   const portrait = HH > HW, sm = Math.min(HW, HH);
-  const sc = clamp(sm / 390, 0.75, 1.35);
-  return { portrait, sc, stickR: 58 * sc, stickX: (SAVE.set.lefty ? HW - 120 * sc : 120 * sc), stickY: HH - 110 * sc, thrX: SAVE.set.lefty ? 46 * sc : HW - 46 * sc, thrTop: HH - (portrait ? 300 : 230) * sc, thrBot: HH - 34 * sc };
+  const sc = clamp(sm / 390, 0.75, 1.35), lf = SAVE.set.lefty;
+  const sL = SAFE.l, sR = SAFE.r, sB = Math.max(0, SAFE.b - 8);
+  const stickR = (portrait ? 54 : 58) * sc, so = (portrait ? 74 : 120) * sc;
+  return { portrait, sc, stickR, stickX: lf ? HW - sR - so : sL + so, stickY: HH - sB - (portrait ? 100 : 110) * sc, thrX: lf ? sL + 46 * sc : HW - sR - 46 * sc, thrTop: HH - sB - (portrait ? 300 : 215) * sc, thrBot: HH - sB - 34 * sc, safeT: SAFE.t, safeL: sL, safeR: sR, safeB: sB };
 }
 function drawHUD(S, dt) {
   const c = hx; c.setTransform(HDPR, 0, 0, HDPR, 0, 0); c.clearRect(0, 0, HW, HH);
@@ -2434,7 +2458,7 @@ function drawHUD(S, dt) {
   if (S.freeStars) drawStarMarkers(c, ac);
   // top-left objective card
   if (M) {
-    const ob = M.objective(), w = Math.min(L.portrait ? HW - 24 : 330 * sc, HW * 0.48 + (L.portrait ? HW * 0.45 : 0)), x = 10 + (S.safeL || 0), y = 10;
+    const ob = M.objective(), x = 10 + L.safeL, y = 10 + L.safeT, w = Math.min(L.portrait ? HW - x - 66 - L.safeR : 330 * sc, HW * 0.48 + (L.portrait ? HW * 0.45 : 0));
     glass(c, x, y, w, 50 * sc, 12 * sc);
     txt(c, ob.text, x + 12, y + 17 * sc, 14 * sc, '#fff', 'left', 900);
     c.save(); c.beginPath(); c.rect(x, y, w - 6, 50 * sc); c.clip(); txt(c, ob.sub || '', x + 12, y + 36 * sc, 11 * sc, '#bfe9ff', 'left', 600); c.restore();
@@ -2446,7 +2470,7 @@ function drawHUD(S, dt) {
   }
   if (!cockpit) {
     // heading tape
-    const hw = Math.min(260 * sc, HW * 0.34), hxp = L.portrait ? HW / 2 : HW / 2, hy = L.portrait ? 96 * sc : 12;
+    const hw = Math.min(260 * sc, HW * 0.34), hxp = L.portrait ? HW / 2 : HW / 2, hy = L.portrait ? 96 * sc + L.safeT : 12 + L.safeT;
     glass(c, hxp - hw / 2, hy, hw, 26 * sc, 9 * sc, 0.4);
     c.save(); rr(c, hxp - hw / 2, hy, hw, 26 * sc, 9 * sc); c.clip();
     const hd = ((ac.hdg / DEG) % 360 + 360) % 360;
@@ -2455,7 +2479,7 @@ function drawHUD(S, dt) {
     c.restore(); c.fillStyle = '#ffd23f'; c.fillRect(hxp - 1, hy, 2, 26 * sc);
     // speed & altitude boxes
     const by = L.portrait ? HH * 0.36 : HH * 0.42, bw = 84 * sc, bh = 46 * sc;
-    const tp = 74 * sc, lf = SAVE.set.lefty; const sx = (L.portrait ? 10 : 12 + (S.safeL || 0)) + (lf ? tp : 0), ax = HW - bw - (L.portrait ? 10 : 12 + (S.safeR || 0)) - (lf ? 0 : tp);
+    const tp = 74 * sc, lf = SAVE.set.lefty; const sx = 10 + L.safeL + (lf ? tp : 0), ax = HW - bw - 10 - L.safeR - (lf ? 0 : tp);
     const vse = ac.d.Vs / Math.sqrt(1 + ac.flapsPos * 0.22);
     const spCol = ac.stallWarn ? '#ff5a5a' : ac.V > ac.d.Vmax * 0.98 ? '#ffb35a' : '#fff';
     glass(c, sx, by, bw, bh, 10 * sc); txt(c, 'SPD kt', sx + bw / 2, by + 11 * sc, 9 * sc, '#9fd8ff', 'center', 700); txt(c, String(Math.round(ac.V * KT)), sx + bw / 2, by + 30 * sc, 20 * sc, spCol, 'center', 900);
@@ -2465,13 +2489,13 @@ function drawHUD(S, dt) {
     glass(c, ax, by, bw, bh, 10 * sc); txt(c, 'ALT ft', ax + bw / 2, by + 11 * sc, 9 * sc, '#9fd8ff', 'center', 700); txt(c, String(altFt), ax + bw / 2, by + 30 * sc, 19 * sc, '#fff', 'center', 900);
     const vsFpm = Math.round(ac.vel[1] * 196.85 / 50) * 50;
     txt(c, (vsFpm > 0 ? '▲' : vsFpm < 0 ? '▼' : '•') + Math.abs(vsFpm), ax + bw / 2, by + bh + 10 * sc, 10.5 * sc, Math.abs(vsFpm) > 1500 ? '#ffb35a' : '#cfefff', 'center', 800);
-    if (ac.agl < 600) txt(c, 'AGL ' + aglFt, ax + bw / 2, by - 9 * sc, 10.5 * sc, ac.agl < 60 ? '#ffe28a' : '#cfefff', 'center', 800);
+    if (ac.agl < 600) txt(c, 'AGL ' + aglFt, ax + bw / 2, by + bh + 25 * sc, 10.5 * sc, ac.agl < 60 ? '#ffe28a' : '#cfefff', 'center', 800);
     txt(c, 'G ' + ac.gs.toFixed(1), sx + bw / 2, by + bh + 10 * sc, 10.5 * sc, ac.gs > 4 ? '#ffb35a' : '#cfefff', 'center', 800);
     // status chips: gear / flaps / brake
     const chips = []; chips.push([ac.d.retract ? (ac.gearPos > 0.98 ? 'GEAR ▼' : ac.gearPos < 0.02 ? 'GEAR ▲' : 'GEAR ⋯') : 'GEAR', ac.d.retract ? (ac.gearPos > 0.98 ? '#3dffb0' : ac.gearPos < 0.02 ? '#aab' : '#ffd23f') : '#3dffb0']);
     chips.push(['FLAPS ' + ['0', '1', 'FULL'][ac.flaps], ac.flaps ? '#ffd23f' : '#aab']);
     if (ac.brake) chips.push(['BRAKE', '#ff6b6b']); if (ac.abOn) chips.push(['A/B', '#ff8a1f']); if (!ac.engineOn) chips.push(['ENGINE OUT', '#ff5a5a']); if (ac.smoke) chips.push(['SMOKE', '#fff']);
-    chips.forEach((ch, i) => { const cx = sx, cy = by + bh + 24 * sc + i * 19 * sc; glass(c, cx, cy, bw, 16 * sc, 6 * sc, 0.4); txt(c, ch[0], cx + bw / 2, cy + 8.5 * sc, 9.5 * sc, ch[1], 'center', 900); });
+    chips.forEach((ch, i) => { const cx = L.portrait ? sx : sx + bw + 6 * sc, cy = L.portrait ? by + bh + 24 * sc + i * 19 * sc : by + i * 19 * sc; const bw0 = bw; { const bw = L.portrait ? bw0 : bw0 * 0.86; glass(c, cx, cy, bw, 16 * sc, 6 * sc, 0.4); txt(c, ch[0], cx + bw / 2, cy + 8.5 * sc, 9.5 * sc, ch[1], 'center', 900); } });
     // minimap
     drawMinimap(c, S, L);
     // flight path marker (velocity vector)
@@ -2483,11 +2507,15 @@ function drawHUD(S, dt) {
   const warn = [];
   if (ac.stallWarn) warn.push(['STALL', '#ff4d4d']);
   if (!ac.onGround && ac.vel[1] < -6 && ac.agl < Math.min(300, -ac.vel[1] * 9) && !(M && M.stage && M.stage.t === 'land' && ac.vel[1] > -9)) warn.push(['PULL UP', '#ff4d4d']);
+  if (!ac.onGround && ac.V > 15 && !warn.length && !(ac.agl < 25 && (ac.gearDown || !ac.d.retract) && ac.vel[1] > -4)) { for (const t of [2, 3.5, 5]) { const px = ac.pos[0] + ac.vel[0] * t, pz = ac.pos[2] + ac.vel[2] * t; if (ac.pos[1] - ac.d.gearH + Math.min(ac.vel[1], 2) * t < surfaceH(px, pz) + 4) { warn.push(['TERRAIN! PULL UP', '#ff4d4d']); if (!S.terrWarnT || S.t - S.terrWarnT > 2.5) { S.terrWarnT = S.t; AU.sfx('warn'); } break; } } }
   if (ac.d.retract && !ac.gearDown && !ac.gearJam && !ac.onGround && ac.agl < 120 && ac.V < ac.d.Vs * 1.7) warn.push(['GEAR!', '#ffd23f']);
   if (ac.V > ac.d.Vmax * 1.05 && !ac.abOn) warn.push(['OVERSPEED', '#ffb35a']);
   if (S.outside > 0) warn.push(['RETURN TO ISLAND ' + Math.ceil(20 - S.outside), '#ffb35a']);
   if (warn.length && (now() * 3) % 1 < 0.7) warn.forEach((w, i) => { const y = HH * (cockpit ? 0.2 : 0.27) + i * 30 * sc; c.font = `900 ${22 * sc}px "Trebuchet MS",sans-serif`; const tw = c.measureText(w[0]).width + 26; glass(c, HW / 2 - tw / 2, y - 15 * sc, tw, 30 * sc, 10, 0.5); txt(c, w[0], HW / 2, y, 22 * sc, w[1], 'center', 900); });
-  if (S.hint) { const h = S.hint; c.font = `800 ${15 * sc}px "Trebuchet MS",sans-serif`; const tw = Math.min(HW - 30, c.measureText(h).width + 30); const y = HH * (L.portrait ? 0.3 : 0.27); const pulse = 0.75 + 0.25 * Math.sin(now() * 5); rr(c, HW / 2 - tw / 2, y - 18 * sc, tw, 36 * sc, 14); c.fillStyle = `rgba(255,210,63,${0.92 * pulse})`; c.fill(); txt(c, h, HW / 2, y, 15 * sc, '#2a1a00', 'center', 900, false); }
+  if (S.hint) { const h = S.hint, fs = 15 * sc; c.font = `800 ${fs}px "Trebuchet MS",sans-serif`; const maxW = Math.min(HW - 30 - L.safeL - L.safeR, 560 * sc);
+    let lines = [h]; if (c.measureText(h).width + 30 > maxW) { const wds = h.split(' '); lines = ['']; for (const wd of wds) { const t = lines[lines.length - 1] ? lines[lines.length - 1] + ' ' + wd : wd; if (c.measureText(t).width + 30 > maxW && lines[lines.length - 1]) lines.push(wd); else lines[lines.length - 1] = t; } }
+    const tw = Math.min(maxW, Math.max(...lines.map(l => c.measureText(l).width)) + 30), lh = fs * 1.25, bh = 36 * sc + (lines.length - 1) * lh; const y = HH * (L.portrait ? (cockpit ? 0.21 : 0.3) : 0.27); const pulse = 0.75 + 0.25 * Math.sin(now() * 5);
+    rr(c, HW / 2 - tw / 2, y - 18 * sc, tw, bh, 14); c.fillStyle = `rgba(255,210,63,${0.92 * pulse})`; c.fill(); lines.forEach((l, i) => txt(c, l, HW / 2, y + i * lh, fs, '#2a1a00', 'center', 900, false)); }
   // pops
   for (let i = POPS.length - 1; i >= 0; i--) { const p = POPS[i]; p.t += dt; if (p.t > 2.2) { POPS.splice(i, 1); continue; } const k = POPS.length - 1 - i; const y = HH * 0.36 - p.t * 22 - k * 30 * sc; c.globalAlpha = clamp(2.2 - p.t, 0, 1); const s = 1 + Math.max(0, 0.3 - p.t) * 1.5; txt(c, p.s, HW / 2, y, 20 * sc * s, p.col, 'center', 900); c.globalAlpha = 1; }
   // landing rating banner
@@ -2514,7 +2542,7 @@ function drawTarget(c, tg, ac, L) {
 }
 function drawStarMarkers(c, ac) { for (const st of W.stars) { if (SAVE.collect[st.id]) continue; const d = vdist(st.p, ac.pos); if (d > 2500) continue; const p = project(st.p); if (!p) continue; c.globalAlpha = clamp(1 - d / 2500, 0, 1); txt(c, '★', p[0], p[1] - 16, 16, '#ffd23f'); c.globalAlpha = 1; } }
 function drawMinimap(c, S, L) {
-  const ac = S.ac, sc = L.sc, r = (L.portrait ? 52 : 58) * sc, cx = HW - r - 14 - (S.safeR || 0), cy = (L.portrait ? 150 : 14 + r + 34) * sc / (L.portrait ? 1 : sc) + (L.portrait ? 0 : 0);
+  const ac = S.ac, sc = L.sc, r = (L.portrait ? 52 : 50) * sc, cx = HW - r - 14 - L.safeR, cy = (L.portrait ? 150 * sc : 56 + r) + L.safeT;
   const cyy = L.portrait ? 96 * sc + 40 * sc + r : 52 + r;
   const range = clamp(2500 + ac.V * 40, 3000, 12000), k = r / range;
   c.save(); c.beginPath(); c.arc(cx, cyy, r, 0, TAU); c.fillStyle = 'rgba(4,14,32,.6)'; c.fill(); c.clip();
@@ -2583,7 +2611,7 @@ function gauge(c, x, y, r, label) {
 }
 function needle(c, x, y, r, a, col = '#fff', w = 3) { c.save(); c.translate(x, y); c.rotate(a); c.strokeStyle = col; c.lineWidth = w; c.lineCap = 'round'; c.beginPath(); c.moveTo(0, r * 0.15); c.lineTo(0, -r * 0.82); c.stroke(); c.restore(); c.fillStyle = '#ccc'; c.beginPath(); c.arc(x, y, r * 0.07, 0, TAU); c.fill(); }
 function drawCockpit(c, S, L) {
-  const ac = S.ac, sc = L.sc, ph = Math.min(HH * 0.34, 150 * sc), py = HH - ph;
+  const ac = S.ac, sc = L.sc, ph = Math.min(HH * 0.34, (L.portrait ? 120 : 150) * sc), py = HH - ph - (L.portrait ? 178 * sc + L.safeB : 0); // portrait: panel sits above the touch controls
   // canopy frame
   c.fillStyle = '#16191e'; c.beginPath(); c.moveTo(0, 0); c.lineTo(HW * 0.08, 0); c.lineTo(HW * 0.0, HH * 0.55); c.closePath(); c.fill();
   c.beginPath(); c.moveTo(HW, 0); c.lineTo(HW * 0.92, 0); c.lineTo(HW, HH * 0.55); c.closePath(); c.fill();
@@ -2592,7 +2620,7 @@ function drawCockpit(c, S, L) {
   const g = c.createLinearGradient(0, py - 18 * sc, 0, HH); g.addColorStop(0, '#1d2127'); g.addColorStop(0.15, '#2a2f37'); g.addColorStop(1, '#14171c'); c.fillStyle = g;
   c.beginPath(); c.moveTo(0, py + 10 * sc); c.quadraticCurveTo(HW / 2, py - 30 * sc, HW, py + 10 * sc); c.lineTo(HW, HH); c.lineTo(0, HH); c.closePath(); c.fill();
   c.strokeStyle = 'rgba(255,255,255,.08)'; c.lineWidth = 2; c.stroke();
-  const r = Math.min(ph * 0.36, HW / 16), gy = py + ph * 0.52, n = 6, span = Math.min(HW * 0.62, r * 2.5 * n), x0 = HW / 2 - span / 2 + r * 1.25;
+  const r = Math.min(ph * 0.36, L.portrait ? HW / 15.5 : HW / 16), gy = py + ph * 0.52, n = 6, span = Math.min(L.portrait ? (SAVE.set.lefty ? HW - L.thrX - 34 * sc : L.thrX - 34 * sc) - 12 : HW * 0.62, r * 2.5 * n), pcx = L.portrait ? (SAVE.set.lefty ? (L.thrX + 34 * sc + HW) / 2 : (L.thrX - 34 * sc) / 2) : HW / 2, x0 = pcx - span / 2 + r * 1.25;
   const X = i => x0 + i * span / n;
   // airspeed
   gauge(c, X(0), gy, r, 'KT'); { const mx = ac.d.Vmax * KT * 1.15; for (let v = 0; v <= mx; v += mx / 10) { const a = -PI * 0.75 + v / mx * PI * 1.5; c.strokeStyle = '#ddd'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(X(0) + Math.sin(a) * r * 0.78, gy - Math.cos(a) * r * 0.78); c.lineTo(X(0) + Math.sin(a) * r * 0.9, gy - Math.cos(a) * r * 0.9); c.stroke(); }
@@ -2673,7 +2701,7 @@ function initUI() {
   click('rRetry', () => startFlight(S.def)); click('rMenu', () => quitToMenu()); click('rCheck', () => restoreCheckpoint());
   click('rNext', () => { const i = MISSIONS.findIndex(m => m.id === S.def.id); if (i >= 0 && i + 1 < MISSIONS.length && missionUnlocked(i + 1)) { GS.state = 'menu'; $('hudBtns').classList.add('hidden'); $('hudPause').classList.add('hidden'); startDemo(); openBrief(MISSIONS[i + 1]); } else quitToMenu(); });
   // settings controls
-  document.querySelectorAll('#scrSettings .tog').forEach(t => t.addEventListener('click', () => { const k = t.dataset.k; SAVE.set[k] = SAVE.set[k] ? 0 : 1; AU.sfx('tap'); if (k === 'tilt' && SAVE.set.tilt && typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) DeviceOrientationEvent.requestPermission().catch(() => { }); applySettings(); renderSettings(); }));
+  document.querySelectorAll('#scrSettings .tog').forEach(t => t.addEventListener('click', () => { const k = t.dataset.k; SAVE.set[k] = SAVE.set[k] ? 0 : 1; AU.sfx('tap'); if (k === 'tilt' && SAVE.set.tilt) IN.tilt.autoCal = true; if (k === 'tilt' && SAVE.set.tilt && typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) DeviceOrientationEvent.requestPermission().catch(() => { }); applySettings(); renderSettings(); }));
   document.querySelectorAll('#scrSettings .seg').forEach(sg => sg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { const k = sg.dataset.k; let v = b.dataset.v; SAVE.set[k] = (k === 'gfx' && v === 'auto') ? 'auto' : +v; AU.sfx('tap'); applySettings(); renderSettings(); })));
   document.querySelectorAll('.adslot').forEach(a => a.setAttribute('data-ad', 'slot'));
 }
@@ -2686,7 +2714,7 @@ function renderSettings() {
 }
 function showHelp() {
   show('scrHelp');
-  $('helpBody').innerHTML = `<p><b>Assisted controls (default):</b> the plane flies itself straight and level. Drag the <b>stick</b> (left side) to bank and climb or dive, then let go to level out. Hold the stick all the way to one side for a full roll, or all the way up or down for a loop.</p>
+  $('helpBody').innerHTML = `<p><b>Assisted controls (default):</b> the plane flies itself straight and level. Drag the <b>stick</b> (left side) to bank and climb or dive, then let go to level out. Close to the ground the assist cushions your sink rate and keeps you out of a stall. In stunt missions and Free Flight, hold the stick all the way to one side for a full roll, or all the way up for a loop (keep your speed up and stay above 70 m).</p>
   <table><tr><td>Steer / pitch</td><td>Stick on the left side of the screen (it appears where you touch), or tilt your phone · Keys: Arrows / WASD</td></tr>
   <tr><td>Throttle</td><td>Slider on the right · Shift/Ctrl, R/F, mouse wheel or 1–0</td></tr>
   <tr><td>Rudder</td><td>Q / E (automatic in assisted mode)</td></tr>
@@ -2780,7 +2808,7 @@ function renderHangar(rebuild) {
 }
 function showResults(ok, why) {
   if (!S || !S.mission) return; const M = S.mission, def = S.def;
-  GS.state = 'result'; $('hudBtns').classList.add('hidden'); $('hudPause').classList.add('hidden'); AU.silence();
+  GS.state = 'result'; $('rotHint').classList.add('hidden'); $('hudBtns').classList.add('hidden'); $('hudPause').classList.add('hidden'); AU.silence();
   let stars = 0, coins = 0, xp = 0;
   const ratio = M.max ? M.score / M.max : 0;
   if (ok) { stars = 1 + (ratio >= 0.6 ? 1 : 0) + (ratio >= 0.82 ? 1 : 0); if (GS.apUsed && !def.free) stars = Math.min(stars, 2); if (M.usedCP) stars = Math.min(stars, 2);
@@ -2856,6 +2884,9 @@ function startFlight(def) {
   $('hudBtns').classList.remove('hidden'); $('hudPause').classList.remove('hidden'); layoutButtons(); updateBtnStates();
   AU.music(true, 'fly'); AU.sfx('atc');
   if (def.tut) { S.tut = { step: 0 }; }
+  if (SAVE.set.tilt) IN.tilt.autoCal = true;
+  IN.stick.id = null; IN.stick.vx = IN.stick.vy = 0; IN.thr.id = null; IN.brakeBtn = false;
+  syncRotHint();
   setTimeout(() => toast(def.name + ' — ' + (S.mission.objective().text)), 300);
   SAVE.flights++; storeSave();
   try { gtag('event', 'level_start', { level_name: def.id }); } catch (e) { }
@@ -2891,6 +2922,7 @@ function onCrash(s, ac, why) {
   setTimeout(() => { if (S === s && s.mission && !s.mission.done) s.mission.finish(false, why); }, 2400);
 }
 /* ---------- input ---------- */
+function wrap180(a) { return ((a + 540) % 360) - 180; }
 function stickInput(dt) {
   const st = { x: 0, y: 0, yaw: 0 }, sens = SAVE.set.sens || 1;
   const ex = v => Math.sign(v) * Math.pow(Math.abs(v), 1.35);
@@ -2899,7 +2931,7 @@ function stickInput(dt) {
   if (K.ArrowLeft || K.KeyA) st.x -= 1; if (K.ArrowRight || K.KeyD) st.x += 1;
   if (K.ArrowUp || K.KeyW) st.y += 1; if (K.ArrowDown || K.KeyS) st.y -= 1;
   if (K.KeyQ) st.yaw -= 1; if (K.KeyE) st.yaw += 1;
-  if (SAVE.set.tilt && IN.tilt.on && IN.stick.id === null) { st.x += clamp((IN.tilt.x - SAVE.set.tiltCal[0]) / 26, -1, 1) * sens; st.y += clamp(-(IN.tilt.y - SAVE.set.tiltCal[1]) / 22, -1, 1) * sens; }
+  if (SAVE.set.tilt && IN.tilt.on && IN.stick.id === null && !IN.tilt.autoCal) { const dzt = (v, dz) => Math.sign(v) * Math.max(0, Math.abs(v) - dz); const cal = SAVE.set.tiltCal || [0, 0]; st.x += clamp(dzt(IN.tilt.x - cal[0], 2.5) / 24, -1, 1) * sens; st.y += clamp(-dzt(wrap180(IN.tilt.y - cal[1]), 3) / 22, -1, 1) * sens; st.tilt = 1; }
   if (SAVE.set.invert) st.y = -st.y;
   st.x = clamp(st.x, -1, 1); st.y = clamp(st.y, -1, 1); st.yaw = clamp(st.yaw, -1, 1);
   if (S && S.ac) { const ac = S.ac;
@@ -2936,18 +2968,19 @@ function setupInput() {
       if (e.code === 'KeyG') toggleGear(); if (e.code === 'KeyV') cycleFlaps(); if (e.code === 'KeyC') cycleCam(); if (e.code === 'Space') { doAction(); e.preventDefault(); }
       if (e.code === 'KeyT') toggleAP(); if (e.code === 'Digit0') S.ac.thr = 1; if (/^Digit[1-9]$/.test(e.code)) S.ac.thr = (+e.code.slice(5)) / 10;
       if (e.code === 'KeyZ') S.zoom = S.zoom > 1.4 ? 0.8 : S.zoom + 0.3;
-      if (S.ac.d.ab) S.ac.ab = 1;
     }
     if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
   });
   addEventListener('keyup', e => { IN.keys[e.code] = false; });
   addEventListener('blur', () => { IN.keys = {}; });
+  addEventListener('contextmenu', e => e.preventDefault()); document.addEventListener('gesturestart', e => e.preventDefault());
   // tilt
   addEventListener('deviceorientation', e => {
     if (e.beta === null) return; IN.tilt.on = true;
     const ang = (screen.orientation && screen.orientation.angle !== undefined) ? screen.orientation.angle : (window.orientation || 0);
     let rx, ry; if (ang === 90) { rx = e.beta; ry = -e.gamma; } else if (ang === -90 || ang === 270) { rx = -e.beta; ry = e.gamma; } else { rx = e.gamma; ry = e.beta; }
     IN.tilt.x = rx; IN.tilt.y = ry;
+    if (IN.tilt.autoCal) { SAVE.set.tiltCal = [rx, ry]; IN.tilt.autoCal = false; storeSave(); }
   });
   // HUD buttons
   const hb = (id, fn, hold) => { const el = $(id); el.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); AU.init(); fn(true); vibe(8); }); if (hold) { const off = e => { fn(false); }; el.addEventListener('pointerup', off); el.addEventListener('pointercancel', off); el.addEventListener('pointerleave', off); } };
@@ -2959,8 +2992,8 @@ function setThrFromY(y) { const l = layout(); if (S && S.ac) { const v = clamp((
 function layoutButtons() {
   const l = layout(), sc = clamp(l.sc, 0.8, 1.2), w = 58 * sc, h = 46 * sc, gap = 7 * sc;
   const ids = ['bGear', 'bFlaps', 'bBrake', 'bAct', 'bCam', 'bAP'];
-  const cols = 3, right = SAVE.set.lefty ? l.thrX + 34 * l.sc : l.thrX - 34 * l.sc - 10;
-  ids.forEach((id, i) => { const el = $(id); const c = i % cols, r = Math.floor(i / cols); const x = SAVE.set.lefty ? right + c * (w + gap) : right - (c + 1) * (w + gap) + gap; const y = HH - (14 * sc + (2 - r) * (h + gap)); el.style.width = w + 'px'; el.style.height = h + 'px'; el.style.left = x + 'px'; el.style.top = (y - h) + 'px'; el.style.fontSize = (11 * sc) + 'px'; });
+  const cols = l.portrait ? 2 : 3, rows = Math.ceil(ids.length / cols), right = SAVE.set.lefty ? l.thrX + 34 * l.sc : l.thrX - 34 * l.sc - 10;
+  ids.forEach((id, i) => { const el = $(id); const c = i % cols, r = Math.floor(i / cols); const x = SAVE.set.lefty ? right + c * (w + gap) : right - (c + 1) * (w + gap) + gap; const y = HH - l.safeB - (14 * sc + (rows - 1 - r) * (h + gap)); el.style.width = w + 'px'; el.style.height = h + 'px'; el.style.left = x + 'px'; el.style.top = (y - h) + 'px'; el.style.fontSize = (11 * sc) + 'px'; });
 }
 function updateBtnStates() {
   if (!S || !S.ac) return; const ac = S.ac, M = S.mission, st = M && M.stage;
@@ -2971,7 +3004,7 @@ function updateBtnStates() {
   $('bAct').firstChild.textContent = act[0]; $('bActT').textContent = act[1]; $('bAct').classList.toggle('on', !!ac.smoke || !!ac.ab);
   $('bAP').classList.toggle('on', GS.ap); $('bCam').lastChild.textContent = ['CHASE', 'COCKPIT', 'CINEMA'][R3.mode];
 }
-function toggleGear() { const ac = S.ac; if (!ac.d.retract) { toast('This plane has fixed landing gear'); return; } if (ac.gearJam) { toast('⚠ Gear is jammed!'); AU.sfx('warn'); return; } if (ac.onGround) { toast('Not on the ground!'); return; } ac.gearDown = ac.gearDown ? 0 : 1; AU.sfx('gear'); updateBtnStates(); }
+function toggleGear() { const ac = S.ac; if (!ac.d.retract) { toast('This plane has fixed landing gear'); return; } if (ac.gearJam) { toast('⚠ Gear is jammed!'); AU.sfx('warn'); return; } if (ac.onGround) { toast('The gear stays down while on the ground'); return; } ac.gearDown = ac.gearDown ? 0 : 1; AU.sfx('gear'); updateBtnStates(); }
 function cycleFlaps() { const ac = S.ac; ac.flaps = (ac.flaps + 1) % 3; AU.sfx('flaps'); updateBtnStates(); }
 function cycleCam() { R3.mode = (R3.mode + 1) % 3; R3.cine = null; S.lookX = S.lookY = 0; S.inside = R3.mode === 1; AU.sfx('click'); updateBtnStates(); }
 function doAction() { const ac = S.ac; if (!S.mission) return; const r = S.mission.action(); if (!r) { if (ac.d.ab) { ac.ab = ac.ab ? 0 : 1; if (ac.ab) ac.thr = 1; toast(ac.ab ? 'Afterburner ready 🔥 (full throttle)' : 'Afterburner off'); } else AU.sfx('atc'); } updateBtnStates(); }
@@ -3046,6 +3079,7 @@ function predictCrate(ac) { const p = vadd(ac.pos, [0, -2, 0]), v = ac.vel.slice
 function updateFlight(dt) {
   const s = S, ac = s.ac; s.t += dt;
   const stick = (GS.bot || GS.ap || s.demo) && !ac.crashed ? botStep(s, dt) : stickInput(dt);
+  { const st0 = s.mission && s.mission.stage; stick.stunt = !!(st0 && (st0.t === 'stunts' || st0.t === 'free')); }
   if (!(GS.bot || GS.ap || s.demo)) {/* manual */ } else stickInput(0);
   // wind + turbulence
   const tb = s.env.turb, wv = s.env.windV, t = s.t;
@@ -3061,6 +3095,10 @@ function updateFlight(dt) {
     if (ac.crashed) break;
   }
   if (s.acc > H * 12) s.acc = 0;
+  // physics safety net: never let a NaN/explosion through (restore the last good state)
+  if (!ac.crashed) { const bad = !(isFinite(ac.pos[0]) && isFinite(ac.pos[1]) && isFinite(ac.pos[2]) && isFinite(ac.vel[0]) && isFinite(ac.vel[1]) && isFinite(ac.vel[2]) && isFinite(ac.q[0]) && isFinite(ac.q[3])) || vlen(ac.vel) > 900;
+    if (bad && s.good) { ac.pos = s.good.pos.slice(); ac.vel = s.good.vel.slice(); ac.q = s.good.q.slice(); ac.w = [0, 0, 0]; }
+    else if (!bad && (s.goodT = (s.goodT || 0) + dt) > 0.5) { s.goodT = 0; s.good = { pos: ac.pos.slice(), vel: ac.vel.slice(), q: ac.q.slice() }; } }
   if (s.mission && !ac.crashed) s.mission.update(dt);
   if (ac.crashed) { s.crashFade = (s.crashFade || 0) + dt * 0.3; }
   // boundary
@@ -3072,7 +3110,7 @@ function updateFlight(dt) {
   if (s.env.weather === 'storm') { s.lightT -= dt; if (s.lightT < 0) { s.lightT = 5 + Math.random() * 10; R3.flash = 1; setTimeout(() => AU.sfx('thunder'), 400 + Math.random() * 1500); } }
   R3.flash = Math.max(0, R3.flash - dt * 3);
   if (s.tut) tutorial(s, dt); else contextHints(s);
-  if (!s.demo && (s.btnT = (s.btnT || 0) + dt) > 0.25) { s.btnT = 0; updateBtnStates(); }
+  if (!s.demo && (s.btnT = (s.btnT || 0) + dt) > 0.25) { s.btnT = 0; updateBtnStates(); syncRotHint(); }
 }
 function tutorial(s, dt) {
   const ac = s.ac, T = s.tut, M = s.mission; const hot = id => { ['bGear', 'bFlaps', 'bBrake', 'bAct', 'bCam', 'bAP'].forEach(x => $(x).classList.toggle('hot', x === id)); };
@@ -3099,6 +3137,10 @@ function contextHints(s) {
   if (st && st.t === 'drop' && M.target() && vdist(M.target().p, ac.pos) < 900 && !ac.onGround) { hotId = 'bAct'; }
   if (st && st.t === 'fire' && ac.tank > 0.45 && M.target() && vdist(M.target().p, ac.pos) < 700) { hotId = 'bAct'; h = 'Press WATER just before the fire'; }
   if (ac.d.ab && ac.thr > 0.97 && !ac.ab && st && st.t === 'rings') hotId = 'bAct';
+  if (st && st.t === 'stunts' && !ac.onGround) { const k = st.list[st.list.findIndex((x, j) => !st.got[j])];
+    if (ac.agl < 120) h = 'Climb above 120 m for stunts'; else if (ac.V < ac.d.Vs * 1.4 && k === 'loop') h = 'Speed up for the loop: full THROTTLE, nose slightly down';
+    else h = { loop: 'LOOP: hold the stick fully UP until you come round', roll: 'ROLL: hold the stick fully LEFT or RIGHT', inverted: 'INVERTED: hold the stick sideways, let go when upside down', knife: 'KNIFE EDGE: roll to 90° with the stick, let go and hold it' }[k] || null; }
+  if (!h && ac.stallWarn && !ac.onGround && ac.engineOn && ac.thr < 0.6 && ac.agl > 8) h = 'Too slow! Push the THROTTLE up';
   s.hint = GS.ap || GS.bot ? null : h;
   ['bGear', 'bFlaps', 'bBrake', 'bAct', 'bCam', 'bAP'].forEach(x => $(x).classList.toggle('hot', x === hotId));
 }
@@ -3175,6 +3217,7 @@ function hangarCam(dt) {
   updateParts(dt);
 }
 function startHangarScene(pid) {
+  clearHUD();
   const ap = APT('ZIA'); const w = rwWorld(ap, 120, ap.wid / 2 + 140);
   const def = { id: 'hangar', plane: pid, tod: 'day', weather: 'clear', stages: () => [{ t: 'free' }], start: { apt: 'ZIA', dir: 1 } };
   S = newSession(def, { demo: true, pose: { pos: [w[0], ap.elev, w[1]], hdg: 200, ground: true, gear: 1 } }); S.mission = null; S.hangar = true; S.spin = 0;
@@ -3186,8 +3229,9 @@ function resize() {
   const ql = QL[Q.lvl]; const dpr = Math.min(devicePixelRatio || 1, ql.dpr) * ql.scale;
   const cv = $('gl'); cv.width = Math.max(2, Math.round(HW * dpr)); cv.height = Math.max(2, Math.round(HH * dpr));
   hudResize(); if (S && GS.state === 'fly') layoutButtons();
-  $('rotHint').classList.toggle('hidden', !(HH > HW && GS.state === 'fly'));
+  syncRotHint();
 }
+function syncRotHint() { const show = HH > HW && GS.state === 'fly' && !GS.paused && (!S || !S.mission || S.mission.t < 6); $('rotHint').classList.toggle('hidden', !show); }
 function setQuality(l) { l = clamp(l, 0, 3); if (l === Q.lvl) return; Q.lvl = l; Q.draw = QL[l].draw; if (S) S.envP = envParams(S.env.tod, S.env.weather); resize(); }
 function autoQuality(dt) {
   Q.frames++; Q.acc += dt; Q.cool -= dt;
@@ -3211,14 +3255,16 @@ function frame(ts) {
   const ac = S.ac; const flying = GS.state === 'fly';
   AU.update({ type: ac.d.type, thr: ac.thr, rpm: ac.rpm, spd: ac.V, ab: ac.abOn, on: (flying || S.demo && !S.hangar) && !ac.crashed && (ac.engineOn || ac.V > 20), inside: R3.mode === 1 || !flying, warn: flying && ac.stallWarn && !ac.crashed, rain: S.env.weather === 'storm', paused: GS.paused || !flying && !S.demo }, dt);
 }
-function pauseGame() { if (GS.state !== 'fly' || GS.paused) return; GS.paused = true; AU.silence(); $('pObj').textContent = S.mission ? S.mission.objective().text : ''; show('scrPause'); $('hudBtns').classList.add('hidden'); }
+function pauseGame() { if (GS.state !== 'fly' || GS.paused) return; GS.paused = true; IN.stick.id = null; IN.stick.vx = IN.stick.vy = 0; IN.thr.id = null; IN.brakeBtn = false; IN.keys = {}; $('rotHint').classList.add('hidden'); AU.silence(); $('pObj').textContent = S.mission ? S.mission.objective().text : ''; show('scrPause'); $('hudBtns').classList.add('hidden'); }
 function resumeGame() { if (!GS.paused) return; GS.paused = false; hideAll(); $('hudBtns').classList.remove('hidden'); $('hudPause').classList.remove('hidden'); GS.last = 0; }
-function quitToMenu() { GS.state = 'menu'; GS.paused = false; $('hudBtns').classList.add('hidden'); $('hudPause').classList.add('hidden'); $('tutBox').classList.add('hidden'); FX.parts.length = 0; startDemo(); showTitle(); AU.music(true, 'menu'); }
+function clearHUD() { try { hx.setTransform(1, 0, 0, 1, 0, 0); hx.clearRect(0, 0, HCV.width, HCV.height); } catch (e) { } }
+function quitToMenu() { GS.state = 'menu'; clearHUD(); $('rotHint').classList.add('hidden'); GS.paused = false; $('hudBtns').classList.add('hidden'); $('hudPause').classList.add('hidden'); $('tutBox').classList.add('hidden'); FX.parts.length = 0; startDemo(); showTitle(); AU.music(true, 'menu'); }
 function boot() {
   HCV = $('hud'); hx = HCV.getContext('2d');
   const cv = $('gl');
   if (!initGL(cv)) { $('scrLoad').classList.add('hidden'); $('noGL').classList.remove('hidden'); return; }
-  cv.addEventListener('webglcontextlost', e => { e.preventDefault(); toast('Graphics reset… please reload'); }, false);
+  cv.addEventListener('webglcontextlost', e => { e.preventDefault(); GS.hidden = true; toast('Graphics reset… reloading'); }, false);
+  cv.addEventListener('webglcontextrestored', () => { storeSave(); location.reload(); }, false);
   const mobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && Math.min(screen.width, screen.height) < 900);
   Q.maxAuto = mobile ? 2 : 3; Q.lvl = SAVE.set.gfx === 'auto' ? (mobile ? 1 : 2) : +SAVE.set.gfx; Q.draw = QL[Q.lvl].draw;
   resize();

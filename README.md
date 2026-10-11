@@ -8,6 +8,8 @@ A premium 3D flight game for mobile and desktop browsers, written in raw WebGL i
 ![Chase cam](screenshot.png)
 ![Cockpit](cockpit.png)
 ![Landing](landing.png)
+![Portrait flight](portrait-flight.png)
+![Portrait cockpit](portrait-cockpit.png)
 
 ## Features
 - A 3D island world: procedural terrain, ocean, cities, 7 airports with runway lights and PAPI, and clouds.
@@ -22,7 +24,8 @@ A premium 3D flight game for mobile and desktop browsers, written in raw WebGL i
 - Automatic quality scaling. The game pauses when the tab is hidden, and progress is saved in localStorage.
 
 ## Controls
-- **Touch:** left virtual stick to steer and pitch (or phone tilt), right slider for throttle, plus buttons for brake, flaps, gear, auto, camera and action.
+- **Touch:** left virtual stick to steer and pitch (or phone tilt, auto-calibrated at the start of each flight), right slider for throttle, plus buttons for brake, flaps, gear, auto, camera and action.
+- **Assisted flying (default):** let go and the plane levels itself; near the ground the assist cushions the sink rate and prevents stalls. In stunt missions and Free Flight, hold the stick fully up for a loop or fully sideways for a roll.
 - **Keyboard:** Arrows/WASD to steer, Shift/Ctrl or R/F for throttle, G for gear, V for flaps, B for brake, Q/E for rudder, C for camera, Space for action, P/Esc to pause.
 
 Game by Zaib · [More games](https://zaibgames.com/) · [Privacy](https://zaibgames.com/privacy/)
