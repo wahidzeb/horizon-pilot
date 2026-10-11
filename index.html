@@ -265,6 +265,15 @@ ul.obj{margin:6px 0;padding-left:18px;font-size:13px;line-height:1.5}
 <div id="safeProbe" style="position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)"></div>
 <div id="rotHint" class="hidden">↻ Landscape recommended</div>
 <script>
+/* GA4 custom events (Games by Zaib). Safe: never throws, light (no per-frame calls, dedupe + per-page cap). */
+var ZT_N = 0, ZT_K = '', ZT_KT = 0, ZT_T = 0, ZT_S = 0, ZT_H = 0;
+function zt(n, p) { try { var k = n + JSON.stringify(p || 0), t = Date.now(); if (ZT_N > 150 || (k === ZT_K && t - ZT_KT < 500)) return; ZT_N++; ZT_K = k; ZT_KT = t; window.gtag && gtag('event', n, Object.assign({ game_id: 'horizon-pilot' }, p)); } catch (e) {} }
+function ztPlay(on) { try { var t = Date.now(); if (ZT_S) { ZT_T += (t - ZT_S) / 1e3; ZT_S = 0; } if (on) ZT_S = t; } catch (e) {} }
+function ztPing(r) { try { ztPlay(false); if (ZT_T >= 1) zt('play_time', { play_time: Math.round(ZT_T), reason: r }); ZT_T = 0; } catch (e) {} }
+try {
+  document.addEventListener('visibilitychange', function () { if (document.hidden) { ZT_H = !!ZT_S; ztPing('page_hide'); } else if (ZT_H) { ZT_H = 0; ztPlay(true); } });
+  document.addEventListener('click', function (e) { try { var a = e.target && e.target.closest && e.target.closest('a[href]'); if (!a) return; var u = new URL(a.href, location.href); if (!/^https?:$/.test(u.protocol)) return; if (u.host === location.host || /(^|\.)zaibgames\.com$/.test(u.host)) { if (u.pathname.indexOf('/horizon-pilot/') !== 0) zt('more_games_click', { link_url: u.href }); } else zt('outbound_click', { link_url: u.href, link_domain: u.host, outbound: true }); } catch (err) {} }, true);
+} catch (e) {}
 'use strict';
 /* ===== Horizon Pilot by Zaib — util: math, noise, rng, save ===== */
 const PI = Math.PI, TAU = PI * 2, DEG = PI / 180;
@@ -2410,7 +2419,7 @@ class MissionRun {
   }
   freeUpdate(dt) {
     const ac = this.S.ac;
-    for (const st of W.stars) { if (SAVE.collect[st.id]) continue; if (vdist(ac.pos, st.p) < 45) { SAVE.collect[st.id] = 1; SAVE.coins += 100; storeSave(); AU.sfx('star'); this.S.pop('★ Golden star! +100', '#ffd23f'); vibe(40); } }
+    for (const st of W.stars) { if (SAVE.collect[st.id]) continue; if (vdist(ac.pos, st.p) < 45) { SAVE.collect[st.id] = 1; SAVE.coins += 100; zt('earn_virtual_currency', { virtual_currency_name: 'coins', value: 100, item_name: 'collectible_star' }); storeSave(); AU.sfx('star'); this.S.pop('★ Golden star! +100', '#ffd23f'); vibe(40); } }
   }
 }
 const STUNT_NAMES = { loop: 'Loop', roll: 'Barrel Roll', inverted: 'Inverted', knife: 'Knife Edge', lowpass: 'Low Pass' };
@@ -2701,8 +2710,8 @@ function initUI() {
   click('rRetry', () => startFlight(S.def)); click('rMenu', () => quitToMenu()); click('rCheck', () => restoreCheckpoint());
   click('rNext', () => { const i = MISSIONS.findIndex(m => m.id === S.def.id); if (i >= 0 && i + 1 < MISSIONS.length && missionUnlocked(i + 1)) { GS.state = 'menu'; $('hudBtns').classList.add('hidden'); $('hudPause').classList.add('hidden'); startDemo(); openBrief(MISSIONS[i + 1]); } else quitToMenu(); });
   // settings controls
-  document.querySelectorAll('#scrSettings .tog').forEach(t => t.addEventListener('click', () => { const k = t.dataset.k; SAVE.set[k] = SAVE.set[k] ? 0 : 1; AU.sfx('tap'); if (k === 'tilt' && SAVE.set.tilt) IN.tilt.autoCal = true; if (k === 'tilt' && SAVE.set.tilt && typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) DeviceOrientationEvent.requestPermission().catch(() => { }); applySettings(); renderSettings(); }));
-  document.querySelectorAll('#scrSettings .seg').forEach(sg => sg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { const k = sg.dataset.k; let v = b.dataset.v; SAVE.set[k] = (k === 'gfx' && v === 'auto') ? 'auto' : +v; AU.sfx('tap'); applySettings(); renderSettings(); })));
+  document.querySelectorAll('#scrSettings .tog').forEach(t => t.addEventListener('click', () => { const k = t.dataset.k; SAVE.set[k] = SAVE.set[k] ? 0 : 1; zt('settings_change', { setting: k, value: String(SAVE.set[k]) }); AU.sfx('tap'); if (k === 'tilt' && SAVE.set.tilt) IN.tilt.autoCal = true; if (k === 'tilt' && SAVE.set.tilt && typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) DeviceOrientationEvent.requestPermission().catch(() => { }); applySettings(); renderSettings(); }));
+  document.querySelectorAll('#scrSettings .seg').forEach(sg => sg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { const k = sg.dataset.k; let v = b.dataset.v; SAVE.set[k] = (k === 'gfx' && v === 'auto') ? 'auto' : +v; zt('settings_change', { setting: k, value: String(v) }); AU.sfx('tap'); applySettings(); renderSettings(); })));
   document.querySelectorAll('.adslot').forEach(a => a.setAttribute('data-ad', 'slot'));
 }
 let setBackTo = 'scrTitle';
@@ -2800,24 +2809,32 @@ function renderHangar(rebuild) {
   h += `<div class="sec">Liveries</div><div class="swatches">` + LIVERIES.map(l => { const L = l.p ? l : p.liv; const on = (SAVE.liv[p.id] || 'classic') === l.id, have = SAVE.livOwned[l.id]; return `<div class="sw${on ? ' on' : ''}${have ? '' : ' lock'}" data-l="${l.id}" data-p="🪙${l.price}" title="${l.name}" style="background:linear-gradient(135deg,${L.p} 0 45%,${L.s} 45% 75%,${L.a} 75%)"></div>`; }).join('') + `</div>`;
   if (p.smoke) h += `<div class="sec">Smoke color</div><div class="swatches">` + SMOKES.map(sm => { const on = SAVE.smoke === sm.id, have = SAVE.smokeOwned[sm.id]; const bg = sm.c ? `rgb(${sm.c.map(v => v * 255 | 0)})` : 'linear-gradient(90deg,red,orange,yellow,lime,cyan,blue,violet)'; return `<div class="sw${on ? ' on' : ''}${have ? '' : ' lock'}" data-s="${sm.id}" data-p="🪙${sm.price}" style="background:${bg}"></div>`; }).join('') + `</div>`;
   $('hSide').innerHTML = h;
-  const buy = $('hBuy'); if (buy) buy.onclick = () => { if (SAVE.coins >= p.price) { SAVE.coins -= p.price; SAVE.planes[p.id] = 1; SAVE.sel = p.id; storeSave(); AU.sfx('buy'); toast(p.name + ' is yours! ✈'); refreshCoins(); renderHangar(); } };
+  const buy = $('hBuy'); if (buy) buy.onclick = () => { if (SAVE.coins >= p.price) { SAVE.coins -= p.price; SAVE.planes[p.id] = 1; zt('spend_virtual_currency', { virtual_currency_name: 'coins', value: p.price, item_name: p.name, item_category: 'plane' }); SAVE.sel = p.id; storeSave(); AU.sfx('buy'); toast(p.name + ' is yours! ✈'); refreshCoins(); renderHangar(); } };
   const sel = $('hSel'); if (sel) sel.onclick = () => { SAVE.sel = p.id; storeSave(); AU.sfx('tap'); renderHangar(); };
-  $('hSide').querySelectorAll('[data-up]').forEach(b => b.onclick = () => { const u = b.dataset.up, up = SAVE.up[p.id] || (SAVE.up[p.id] = {}), lv = up[u] || 0, cost = upCost(p, lv); if (SAVE.coins >= cost && lv < 4) { SAVE.coins -= cost; up[u] = lv + 1; storeSave(); AU.sfx('buy'); refreshCoins(); renderHangar(); } });
-  $('hSide').querySelectorAll('[data-l]').forEach(b => b.onclick = () => { const l = LIVERIES.find(x => x.id === b.dataset.l); if (!SAVE.livOwned[l.id]) { if (SAVE.coins < l.price) { toast('Not enough coins'); AU.sfx('warn'); return; } SAVE.coins -= l.price; SAVE.livOwned[l.id] = 1; AU.sfx('buy'); toast(l.name + ' livery unlocked!'); } SAVE.liv[p.id] = l.id; storeSave(); refreshCoins(); renderHangar(true); });
-  $('hSide').querySelectorAll('[data-s]').forEach(b => b.onclick = () => { const sm = SMOKES.find(x => x.id === b.dataset.s); if (!SAVE.smokeOwned[sm.id]) { if (SAVE.coins < sm.price) { toast('Not enough coins'); return; } SAVE.coins -= sm.price; SAVE.smokeOwned[sm.id] = 1; AU.sfx('buy'); } SAVE.smoke = sm.id; storeSave(); refreshCoins(); renderHangar(); });
+  $('hSide').querySelectorAll('[data-up]').forEach(b => b.onclick = () => { const u = b.dataset.up, up = SAVE.up[p.id] || (SAVE.up[p.id] = {}), lv = up[u] || 0, cost = upCost(p, lv); if (SAVE.coins >= cost && lv < 4) { SAVE.coins -= cost; up[u] = lv + 1; zt('spend_virtual_currency', { virtual_currency_name: 'coins', value: cost, item_name: p.name + ' ' + u + ' ' + (lv + 1), item_category: 'upgrade' }); storeSave(); AU.sfx('buy'); refreshCoins(); renderHangar(); } });
+  $('hSide').querySelectorAll('[data-l]').forEach(b => b.onclick = () => { const l = LIVERIES.find(x => x.id === b.dataset.l); if (!SAVE.livOwned[l.id]) { if (SAVE.coins < l.price) { toast('Not enough coins'); AU.sfx('warn'); return; } SAVE.coins -= l.price; SAVE.livOwned[l.id] = 1; zt('spend_virtual_currency', { virtual_currency_name: 'coins', value: l.price, item_name: l.name, item_category: 'livery' }); AU.sfx('buy'); toast(l.name + ' livery unlocked!'); } SAVE.liv[p.id] = l.id; storeSave(); refreshCoins(); renderHangar(true); });
+  $('hSide').querySelectorAll('[data-s]').forEach(b => b.onclick = () => { const sm = SMOKES.find(x => x.id === b.dataset.s); if (!SAVE.smokeOwned[sm.id]) { if (SAVE.coins < sm.price) { toast('Not enough coins'); return; } SAVE.coins -= sm.price; SAVE.smokeOwned[sm.id] = 1; zt('spend_virtual_currency', { virtual_currency_name: 'coins', value: sm.price, item_name: sm.name || sm.id, item_category: 'smoke' }); AU.sfx('buy'); } SAVE.smoke = sm.id; storeSave(); refreshCoins(); renderHangar(); });
 }
 function showResults(ok, why) {
   if (!S || !S.mission) return; const M = S.mission, def = S.def;
   GS.state = 'result'; $('rotHint').classList.add('hidden'); $('hudBtns').classList.add('hidden'); $('hudPause').classList.add('hidden'); AU.silence();
-  let stars = 0, coins = 0, xp = 0;
+  let stars = 0, coins = 0, xp = 0; const zPrev = SAVE.best[def.id] || 0;
   const ratio = M.max ? M.score / M.max : 0;
   if (ok) { stars = 1 + (ratio >= 0.6 ? 1 : 0) + (ratio >= 0.82 ? 1 : 0); if (GS.apUsed && !def.free) stars = Math.min(stars, 2); if (M.usedCP) stars = Math.min(stars, 2);
     const first = !SAVE.done[def.id]; coins = Math.round(def.reward * (0.5 + stars * 0.25)) + (first ? Math.round(def.reward * 0.5) : 0); xp = Math.round(def.reward * 0.4 * stars) + 30;
     if (def.daily) { const dk = todayKey(); if (SAVE.daily.day !== dk || !SAVE.daily.done) { const y = new Date(Date.now() - 864e5); const yk = y.getFullYear() + '-' + (y.getMonth() + 1) + '-' + y.getDate(); SAVE.daily.streak = SAVE.daily.last === yk ? (SAVE.daily.streak || 0) + 1 : 1; SAVE.daily.last = dk; SAVE.daily.day = dk; SAVE.daily.done = 1; coins += 300 + 50 * Math.min(SAVE.daily.streak, 7); } else coins = Math.round(coins * 0.3); }
     if (!def.daily && !def.free) { SAVE.done[def.id] = 1; SAVE.stars[def.id] = Math.max(SAVE.stars[def.id] || 0, stars); SAVE.best[def.id] = Math.max(SAVE.best[def.id] || 0, M.score); }
-    AU.sfx('win'); try { gtag('event', 'level_end', { level_name: def.id, success: true }); } catch (e) { }
+    AU.sfx('win');
   } else { coins = Math.round(M.score * 0.05); xp = 10; AU.sfx('fail'); }
   const r0 = rankOf(SAVE.xp); SAVE.coins += coins; SAVE.xp += xp; const r1 = rankOf(SAVE.xp); storeSave();
+  { const zm = def.daily ? 'daily' : def.free ? 'free' : 'career', zs = Math.round(M.score || 0);
+    zt('level_end', { level: def.id, level_name: def.id, mode: zm, success: !!ok, stars: stars, score: zs });
+    if (!ok) zt('game_over', { score: zs, level: def.id, mode: zm, reason: String(why || '').slice(0, 60) });
+    else if (def.tut) zt('tutorial_complete', {});
+    if (ok && zs > zPrev && !def.free) zt('post_score', { score: zs, level: def.id, mode: zm });
+    if (coins > 0) zt('earn_virtual_currency', { virtual_currency_name: 'coins', value: coins, item_name: zm + (ok ? '_complete' : '_fail') });
+    if (r1 > r0) zt('unlock_achievement', { achievement_id: 'rank_' + r1 });
+    ztPing(ok ? 'level_clear' : 'game_over'); }
   show('scrResult');
   $('rTitle').textContent = ok ? (def.free ? 'Flight Complete' : 'Mission Complete!') : (why && why.includes('time') ? 'Out of Time' : 'Mission Failed');
   const sp = $('rStars').children; for (let i = 0; i < 3; i++) { sp[i].classList.remove('on'); if (i < stars) setTimeout(() => { sp[i].classList.add('on'); AU.sfx('star'); }, 350 + i * 300); }
@@ -2889,7 +2906,7 @@ function startFlight(def) {
   syncRotHint();
   setTimeout(() => toast(def.name + ' — ' + (S.mission.objective().text)), 300);
   SAVE.flights++; storeSave();
-  try { gtag('event', 'level_start', { level_name: def.id }); } catch (e) { }
+  { const zm = def.daily ? 'daily' : def.free ? 'free' : 'career'; zt('game_start', { mode: zm, level: def.id, plane: S.pid || def.plane || SAVE.sel }); zt('level_start', { level: def.id, level_name: def.id, mode: zm }); if (def.tut) zt('tutorial_begin', {}); ztPlay(true); }
 }
 function restoreCheckpoint() {
   const cp = S.cp; if (!cp) return startFlight(S.def);
@@ -2912,7 +2929,7 @@ function onTouchdown(s, ac, td) {
   else { const n = td.belly ? 40 : 10; for (let i = 0; i < n; i++) puff(vadd(ac.pos, [(Math.random() - 0.5) * 3, -ac.d.gearH + 0.3, (Math.random() - 0.5) * 3]), [(Math.random() - 0.5) * 2, 1 + Math.random(), (Math.random() - 0.5) * 2], { max: 2.5, s0: 1.5, s1: 8, c: td.rw ? [0.92, 0.92, 0.92] : [0.75, 0.68, 0.55], a: 0.7, drag: 1.2 }); }
   if (td.belly) { for (let i = 0; i < 30; i++) puff(vadd(ac.pos, [0, -ac.d.gearH * 0.4, 0]), [(Math.random() - 0.5) * 12, Math.random() * 8, (Math.random() - 0.5) * 12], { max: 0.8, s0: 0.5, s1: 0.2, c: [1, 0.7, 0.3], a: 1, cell: 3, add: 1, grav: 9.8 }); }
   SAVE.landings++; if (vs < 0.9) SAVE.butter++;
-  if (s.def.free && td.rw && vs < 2.6) { const k = 'fl_' + td.rw.id; if (!s[k]) { s[k] = 1; SAVE.coins += 50; pop('Nice landing! +50 coins', '#ffd23f'); storeSave(); } }
+  if (s.def.free && td.rw && vs < 2.6) { const k = 'fl_' + td.rw.id; if (!s[k]) { s[k] = 1; SAVE.coins += 50; zt('earn_virtual_currency', { virtual_currency_name: 'coins', value: 50, item_name: 'landing_bonus' }); pop('Nice landing! +50 coins', '#ffd23f'); storeSave(); } }
 }
 function onCrash(s, ac, why) {
   explode(ac.pos); AU.sfx('boom'); vibe([80, 40, 120]); R3.shake = 2.5;
