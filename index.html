@@ -115,7 +115,7 @@ ul.obj{margin:6px 0;padding-left:18px;font-size:13px;line-height:1.5}
 .help{font-size:14px;line-height:1.45}.help table{width:100%;border-collapse:collapse;font-size:13px}.help td{padding:4px;border-bottom:1px solid rgba(255,255,255,.08)}.help td:first-child{font-weight:900;color:#9be6ff;white-space:nowrap}
 /* HUD buttons */
 #hudBtns{position:fixed;inset:0;pointer-events:none;z-index:3}
-.hb{position:absolute;pointer-events:auto;width:58px;height:46px;border-radius:14px;border:1.5px solid rgba(160,230,255,.45);background:linear-gradient(180deg,rgba(40,100,170,.55),rgba(8,28,60,.7));color:#fff;font:900 11px "Trebuchet MS",sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;box-shadow:0 4px 12px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.25);touch-action:none;letter-spacing:.5px}
+.hb{position:absolute;pointer-events:auto;width:58px;height:46px;border-radius:14px;border:1px solid rgba(190,235,255,.32);background:linear-gradient(180deg,rgba(40,90,150,.42),rgba(6,20,44,.55));box-shadow:0 3px 10px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.18);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);color:#fff;font:900 10.5px "Trebuchet MS",sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;box-shadow:0 4px 12px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.25);touch-action:none;letter-spacing:.5px}
 .hb .i{font-size:17px;line-height:1}
 .hb.on{background:linear-gradient(180deg,rgba(255,210,63,.85),rgba(200,120,0,.85));color:#2a1a00;border-color:#ffe28a}
 .hb.hot{background:linear-gradient(180deg,rgba(61,255,176,.85),rgba(10,150,100,.85));color:#00261a;border-color:#9dffd6;animation:pulse 1s infinite}
@@ -1042,40 +1042,65 @@ function buildTerrainChunk(ci, cj, s) {
   const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
   return { vb, ib, n: idx.length, ymin, ymax };
 }
-function makeRunwayTex(ap) {
-  const cv = document.createElement('canvas'); cv.width = 128; cv.height = 2048; const c = cv.getContext('2d');
-  const L = ap.len, Wd = ap.wid, sx = 128 / Wd, sy = 2048 / L, R = mulberry32(hashStr(ap.id));
-  c.fillStyle = '#4a4c50'; c.fillRect(0, 0, 128, 2048);
-  for (let i = 0; i < 9000; i++) { const g = 60 + R() * 40 | 0; c.fillStyle = `rgba(${g},${g},${g + 4},${0.25 + R() * 0.3})`; c.fillRect(R() * 128, R() * 2048, 1 + R() * 2, 1 + R() * 3); }
-  // patches
-  for (let i = 0; i < 18; i++) { c.fillStyle = `rgba(${R() < 0.5 ? '30,30,34' : '95,95,100'},0.18)`; c.fillRect(R() * 100, R() * 2048, 20 + R() * 40, 40 + R() * 160); }
-  c.save(); c.scale(sx, sy);
-  // tire marks around touchdown zones
+function paintRunwayMarks(c, ap, R, rect) { // global runway meters: x 0..Wd, y 0..L; rect=null -> tire marks only
+  const L = ap.len, Wd = ap.wid;
   for (const end of [0, 1]) for (let i = 0; i < 40; i++) {
     const a = 250 + R() * 500, y = end ? L - a : a, x = Wd / 2 + (R() - 0.5) * 8 + (R() < 0.5 ? -3 : 3);
     c.fillStyle = 'rgba(20,20,22,0.18)'; c.fillRect(x - 0.4, y - 20, 0.8 + R(), 40 + R() * 60);
   }
-  c.fillStyle = '#f2f2ee';
-  // edges
+  if (!rect) return; c.fillStyle = '#f2f2ee';
   c.fillRect(1, 0, 0.9, L); c.fillRect(Wd - 1.9, 0, 0.9, L);
-  // centerline
   for (let y = 120; y < L - 120; y += 50) c.fillRect(Wd / 2 - 0.45, y, 0.9, 30);
   const num = h => { let n = Math.round(((h % 360) + 360) % 360 / 10); if (n === 0) n = 36; return String(n).padStart(2, '0'); };
   const drawEnd = (txt) => {
-    // piano keys at bottom (near end), numbers above
     const keys = Wd >= 40 ? 12 : 8, kw = 1.8, gap = (Wd - 6 - keys * kw) / (keys - 1);
     for (let k = 0; k < keys; k++) c.fillRect(3 + k * (kw + gap), L - 36, kw, 30);
-    c.save(); c.translate(Wd / 2, L - 48); c.scale(1, 2.6); c.font = 'bold 9px Arial'; c.textAlign = 'center'; c.textBaseline = 'bottom'; c.fillText(txt, 0, 0); c.restore();
-    // aiming point
+    segDigits(txt, Wd / 2, L - 48, (x, y, w, h) => c.fillRect(x, y, w, h));
     c.fillRect(Wd / 2 - 9, L - 345, 4, 45); c.fillRect(Wd / 2 + 5, L - 345, 4, 45);
-    // touchdown zone
     for (let k = 0; k < 3; k++) { const y = L - 150 - k * 150 - (k > 0 ? 300 : 0); for (let m = 0; m < 3 - k; m++) { c.fillRect(Wd / 2 - 8 - m * 2.2, y - 22, 1.4, 22); c.fillRect(Wd / 2 + 6.6 + m * 2.2, y - 22, 1.4, 22); } }
   };
   drawEnd(num(ap.hdg));
   c.save(); c.translate(Wd, L); c.rotate(PI); drawEnd(num(ap.hdg + 180)); c.restore();
-  c.restore();
-  return texFromCanvas(cv, false, true);
 }
+// blocky runway designator digits (7-segment), glyph box 6x18 m, baseline at by, reads from the approach side
+function segDigits(txt, cx, by, rect) {
+  const SEG = { '0': 'abcdef', '1': 'bc', '2': 'abged', '3': 'abgcd', '4': 'fgbc', '5': 'afgcd', '6': 'afgedc', '7': 'abc', '8': 'abcdefg', '9': 'abcdfg' };
+  const w = 6, h = 18, t = 1.5, gap = 2.4, tw = txt.length * w + (txt.length - 1) * gap; let x0 = cx - tw / 2;
+  for (const ch of txt) { const sg = SEG[ch] || ''; const R = (gx, gy, gw, gh) => rect(x0 + gx, by - gy - gh, gw, gh);
+    if (sg.includes('a')) R(0, h - t, w, t); if (sg.includes('b')) R(w - t, h / 2, t, h / 2); if (sg.includes('c')) R(w - t, 0, t, h / 2); if (sg.includes('d')) R(0, 0, w, t); if (sg.includes('e')) R(0, 0, t, h / 2); if (sg.includes('f')) R(0, h / 2, t, h / 2); if (sg.includes('g')) R(0, h / 2 - t / 2, w, t);
+    x0 += w + gap; }
+}
+function runwayMarkQuads(ap) { // all paint markings as crisp geometry quads (world space)
+  const L = ap.len, Wd = ap.wid, hl = L / 2, hw = Wd / 2, e = ap.elev + 0.25, out = [];
+  const P = (x, y) => { const w = rwWorld(ap, hl - y, x - hw); return [w[0], e, w[1]]; };
+  const rectA = (x, y, w, h) => out.push({ p: [P(x, y + h), P(x + w, y + h), P(x + w, y), P(x, y)], uv: [[0.5, 0.5], [0.5, 0.5], [0.5, 0.5], [0.5, 0.5]] });
+  const rectB = (x, y, w, h) => rectA(Wd - x - w, L - y - h, w, h);
+  const c = { fillRect: rectA }, c2 = { fillRect: rectB };
+  const num = h => { let n = Math.round(((h % 360) + 360) % 360 / 10); if (n === 0) n = 36; return String(n).padStart(2, '0'); };
+  rectA(1, 0, 0.9, L); rectA(Wd - 1.9, 0, 0.9, L);
+  for (let y = 120; y < L - 120; y += 50) rectA(Wd / 2 - 0.45, y, 0.9, 30);
+  const drawEnd = (cc, txt) => {
+    const keys = Wd >= 40 ? 12 : 8, kw = 1.8, gap = (Wd - 6 - keys * kw) / (keys - 1);
+    for (let k = 0; k < keys; k++) cc.fillRect(3 + k * (kw + gap), L - 36, kw, 30);
+    segDigits(txt, Wd / 2, L - 48, cc.fillRect);
+    cc.fillRect(Wd / 2 - 9, L - 345, 4, 45); cc.fillRect(Wd / 2 + 5, L - 345, 4, 45);
+    for (let k = 0; k < 3; k++) { const y = L - 150 - k * 150 - (k > 0 ? 300 : 0); for (let m = 0; m < 3 - k; m++) { cc.fillRect(Wd / 2 - 8 - m * 2.2, y - 22, 1.4, 22); cc.fillRect(Wd / 2 + 6.6 + m * 2.2, y - 22, 1.4, 22); } }
+  };
+  drawEnd(c, num(ap.hdg)); drawEnd(c2, num(ap.hdg + 180));
+  return out;
+}
+function runwayCanvas(ap, W2, H2, y0, y1) { // texture covering runway meters y0..y1
+  const cv = document.createElement('canvas'); cv.width = W2; cv.height = H2; const c = cv.getContext('2d');
+  const Wd = ap.wid, sx = W2 / Wd, sy = H2 / (y1 - y0), R = mulberry32(hashStr(ap.id + ':' + y0));
+  c.fillStyle = '#4a4c50'; c.fillRect(0, 0, W2, H2);
+  const n = Math.round(9000 * (W2 * H2) / (128 * 2048)); for (let i = 0; i < n; i++) { const g = 60 + R() * 40 | 0; c.fillStyle = `rgba(${g},${g},${g + 4},${0.25 + R() * 0.3})`; c.fillRect(R() * W2, R() * H2, 1 + R() * 2, 1 + R() * 3); }
+  for (let i = 0; i < 18 * H2 / 2048 * 4; i++) { c.fillStyle = `rgba(${R() < 0.5 ? '30,30,34' : '95,95,100'},0.16)`; c.fillRect(R() * W2 * 0.8, R() * H2, W2 * (0.15 + R() * 0.3), H2 * (0.02 + R() * 0.08)); }
+  c.save(); c.scale(sx, sy); c.translate(0, -y0); paintRunwayMarks(c, ap, mulberry32(hashStr(ap.id)), null);
+  c.restore();
+  return cv;
+}
+function texAniso(t) { const af = gl.getExtension('EXT_texture_filter_anisotropic') || gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic'); if (af) { gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameterf(gl.TEXTURE_2D, af.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(af.MAX_TEXTURE_MAX_ANISOTROPY_EXT))); } return t; }
+function makeRunwayTex(ap) { return texAniso(texFromCanvas(runwayCanvas(ap, 128, 2048, 0, ap.len), false, true)); }
 function texQuadBuffer(quads) { // quads: [{p:[4 pts], uv:[4]}]
   const f = []; for (const q of quads) { const o = [0, 1, 2, 0, 2, 3]; for (const k of o) f.push(q.p[k][0], q.p[k][1], q.p[k][2], q.uv[k][0], q.uv[k][1]); }
   const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(f), gl.STATIC_DRAW); return { vb, n: f.length / 5 };
@@ -1265,7 +1290,8 @@ function buildWorld(quality) {
   W.runways = AIRPORTS.map(ap => {
     const e = ap.elev + 0.25, hw = ap.wid / 2, hl = ap.len / 2;
     const P = (a, b) => { const w = rwWorld(ap, a, b); return [w[0], e, w[1]]; };
-    return { ap, tex: makeRunwayTex(ap), q: texQuadBuffer([{ p: [P(-hl, -hw), P(-hl, hw), P(hl, hw), P(hl, -hw)], uv: [[0, 1], [1, 1], [1, 0], [0, 0]] }]) };
+    if (!W.whiteTex) { const wc = document.createElement('canvas'); wc.width = wc.height = 4; const wg = wc.getContext('2d'); wg.fillStyle = '#f2f2ee'; wg.fillRect(0, 0, 4, 4); W.whiteTex = texFromCanvas(wc, false, false); }
+    return { ap, tex: makeRunwayTex(ap), q: texQuadBuffer([{ p: [P(-hl, -hw), P(-hl, hw), P(hl, hw), P(hl, -hw)], uv: [[0, 1], [1, 1], [1, 0], [0, 0]] }]), marks: { tex: W.whiteTex, q: texQuadBuffer(runwayMarkQuads(ap)) } };
   });
   // airports + seaplane base mesh
   W.lights = []; W.papi = []; W.buildings = []; W.bgrid = new Map(); W.streetLights = [];
@@ -1928,6 +1954,9 @@ function updateCamera(S, dt) {
 }
 function setupFrame(env, time) {
   R3.proj = m4persp(R3.fov * DEG, R3.W / R3.H, R3.near, Math.max(Q.draw * 1.6, 25000));
+  // title screen: lens-shift the demo plane into the free band above the logo/menu
+  { const tEl = typeof GS !== 'undefined' && GS.state !== 'fly' ? document.getElementById('scrTitle') : null, onTitle = !!(tEl && !tEl.classList.contains('hidden'));
+    R3.lens = damp(R3.lens || 0, onTitle ? (R3.H > R3.W ? 0.5 : 0.58) : 0, 4, 1 / 60); if (R3.lens > 0.001) R3.proj[9] = -R3.lens; }
   R3.vp = m4mul(R3.proj, R3.view);
   extractFrustum(R3.vp);
   const inv = m4inv(R3.view); R3.cam = [inv[12], inv[13], inv[14]]; R3.camF = [-inv[8], -inv[9], -inv[10]]; R3.camR = [inv[0], inv[1], inv[2]]; R3.camU = [inv[4], inv[5], inv[6]];
@@ -1967,9 +1996,12 @@ function drawRunways() {
   gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -2);
   for (const rw of W.runways) {
     if (Math.hypot(rw.ap.x - R3.cam[0], rw.ap.z - R3.cam[2]) > Q.draw + rw.ap.len) continue;
-    gl.bindTexture(gl.TEXTURE_2D, rw.tex); gl.bindBuffer(gl.ARRAY_BUFFER, rw.q.vb);
-    gl.enableVertexAttribArray(s.a.aPos); gl.vertexAttribPointer(s.a.aPos, 3, gl.FLOAT, false, 20, 0); gl.enableVertexAttribArray(s.a.aUV); gl.vertexAttribPointer(s.a.aUV, 2, gl.FLOAT, false, 20, 12);
-    gl.drawArrays(gl.TRIANGLES, 0, rw.q.n);
+    for (const part of [rw, rw.marks]) { if (part === rw.marks) gl.polygonOffset(-2, -8);
+      gl.bindTexture(gl.TEXTURE_2D, part.tex); gl.bindBuffer(gl.ARRAY_BUFFER, part.q.vb);
+      gl.enableVertexAttribArray(s.a.aPos); gl.vertexAttribPointer(s.a.aPos, 3, gl.FLOAT, false, 20, 0); gl.enableVertexAttribArray(s.a.aUV); gl.vertexAttribPointer(s.a.aUV, 2, gl.FLOAT, false, 20, 12);
+      gl.drawArrays(gl.TRIANGLES, 0, part.q.n);
+    }
+    gl.polygonOffset(-1, -2);
   }
   gl.disable(gl.POLYGON_OFFSET_FILL);
 }
@@ -2431,8 +2463,8 @@ const POPS = []; let rainDrops = [];
 function hudResize() { readSafe(); HDPR = Math.min(devicePixelRatio || 1, 2); HCV.width = Math.round(HW * HDPR); HCV.height = Math.round(HH * HDPR); }
 function rr(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
 function glass(c, x, y, w, h, r, a = 0.55) {
-  rr(c, x, y, w, h, r); const g = c.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, `rgba(20,44,80,${a})`); g.addColorStop(1, `rgba(4,14,32,${a + 0.1})`); c.fillStyle = g; c.fill();
-  c.strokeStyle = 'rgba(150,220,255,.35)'; c.lineWidth = 1.2; c.stroke();
+  rr(c, x, y, w, h, r); const g = c.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, `rgba(20,44,80,${a * 0.8})`); g.addColorStop(1, `rgba(4,14,32,${a * 0.8 + 0.08})`); c.fillStyle = g; c.fill();
+  c.strokeStyle = 'rgba(170,225,255,.28)'; c.lineWidth = 1.2; c.stroke();
   rr(c, x + 2, y + 2, w - 4, h * 0.45, r - 2); c.fillStyle = 'rgba(255,255,255,.06)'; c.fill();
 }
 function txt(c, s, x, y, sz, col = '#fff', al = 'center', wt = 800, sh = true) {
@@ -2497,12 +2529,11 @@ function drawHUD(S, dt) {
     const altFt = Math.round(ac.pos[1] * FT), aglFt = Math.round(Math.max(0, ac.agl) * FT);
     glass(c, ax, by, bw, bh, 10 * sc); txt(c, 'ALT ft', ax + bw / 2, by + 11 * sc, 9 * sc, '#9fd8ff', 'center', 700); txt(c, String(altFt), ax + bw / 2, by + 30 * sc, 19 * sc, '#fff', 'center', 900);
     const vsFpm = Math.round(ac.vel[1] * 196.85 / 50) * 50;
-    txt(c, (vsFpm > 0 ? '▲' : vsFpm < 0 ? '▼' : '•') + Math.abs(vsFpm), ax + bw / 2, by + bh + 10 * sc, 10.5 * sc, Math.abs(vsFpm) > 1500 ? '#ffb35a' : '#cfefff', 'center', 800);
-    if (ac.agl < 600) txt(c, 'AGL ' + aglFt, ax + bw / 2, by + bh + 25 * sc, 10.5 * sc, ac.agl < 60 ? '#ffe28a' : '#cfefff', 'center', 800);
-    txt(c, 'G ' + ac.gs.toFixed(1), sx + bw / 2, by + bh + 10 * sc, 10.5 * sc, ac.gs > 4 ? '#ffb35a' : '#cfefff', 'center', 800);
+    if (!ac.onGround) txt(c, (vsFpm > 0 ? '▲' : vsFpm < 0 ? '▼' : '•') + Math.abs(vsFpm), ax + bw / 2, by + bh + 10 * sc, 10.5 * sc, Math.abs(vsFpm) > 1500 ? '#ffb35a' : '#cfefff', 'center', 800);
+    if (ac.agl < 600 && !ac.onGround) txt(c, 'AGL ' + aglFt, ax + bw / 2, by + bh + 25 * sc, 10.5 * sc, ac.agl < 60 ? '#ffe28a' : '#cfefff', 'center', 800);
+    if (Math.abs(ac.gs - 1) > 0.6 && !ac.onGround) txt(c, 'G ' + ac.gs.toFixed(1), sx + bw / 2, by + bh + 10 * sc, 10.5 * sc, ac.gs > 4 ? '#ffb35a' : '#cfefff', 'center', 800);
     // status chips: gear / flaps / brake
-    const chips = []; chips.push([ac.d.retract ? (ac.gearPos > 0.98 ? 'GEAR ▼' : ac.gearPos < 0.02 ? 'GEAR ▲' : 'GEAR ⋯') : 'GEAR', ac.d.retract ? (ac.gearPos > 0.98 ? '#3dffb0' : ac.gearPos < 0.02 ? '#aab' : '#ffd23f') : '#3dffb0']);
-    chips.push(['FLAPS ' + ['0', '1', 'FULL'][ac.flaps], ac.flaps ? '#ffd23f' : '#aab']);
+    const chips = []; if (ac.d.retract && ac.gearPos > 0.02 && ac.gearPos < 0.98) chips.push(['GEAR ⋯', '#ffd23f']);
     if (ac.brake) chips.push(['BRAKE', '#ff6b6b']); if (ac.abOn) chips.push(['A/B', '#ff8a1f']); if (!ac.engineOn) chips.push(['ENGINE OUT', '#ff5a5a']); if (ac.smoke) chips.push(['SMOKE', '#fff']);
     chips.forEach((ch, i) => { const cx = L.portrait ? sx : sx + bw + 6 * sc, cy = L.portrait ? by + bh + 24 * sc + i * 19 * sc : by + i * 19 * sc; const bw0 = bw; { const bw = L.portrait ? bw0 : bw0 * 0.86; glass(c, cx, cy, bw, 16 * sc, 6 * sc, 0.4); txt(c, ch[0], cx + bw / 2, cy + 8.5 * sc, 9.5 * sc, ch[1], 'center', 900); } });
     // minimap
