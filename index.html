@@ -3328,7 +3328,7 @@ function boot() {
   const run = () => {
     if (i >= steps.length) { $('scrLoad').classList.add('hidden'); GS.state = 'menu'; initUI(); setupInput(); startDemo(); showTitle(); requestAnimationFrame(frame); return; }
     $('loadT').textContent = steps[i][0]; $('loadI').style.width = ((i + 1) / steps.length * 100) + '%';
-    setTimeout(() => { try { steps[i][1](); } catch (e) { console.error(e); $('loadT').textContent = 'Error: ' + e.message; throw e; } i++; run(); }, 30);
+    setTimeout(() => { try { steps[i][1](); } catch (e) { console.warn(e); try { zt('js_error', { msg: String(e && e.message || e).slice(0, 90), where: 'load' }); } catch (x) { } $('loadT').textContent = 'Something went wrong. Please reload the page.'; return; } i++; run(); }, 30);
   };
   run();
   addEventListener('resize', () => setTimeout(resize, 60));
