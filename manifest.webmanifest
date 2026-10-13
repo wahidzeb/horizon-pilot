@@ -1,0 +1,42 @@
+{
+  "id": "/horizon-pilot/",
+  "name": "Horizon Pilot",
+  "short_name": "Horizon Pilot",
+  "description": "Horizon Pilot by Zaib - a 3D flight game for your phone and browser. Fly 7 aircraft over a living island with mountains, cities and airports: 25 career missions, landings, aerobatics, firefighting, rescues, free flight and a daily challenge.",
+  "lang": "en",
+  "start_url": "/horizon-pilot/?source=pwa",
+  "scope": "/horizon-pilot/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#071a33",
+  "background_color": "#071a33",
+  "categories": [
+    "games"
+  ],
+  "icons": [
+    {
+      "src": "/horizon-pilot/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/horizon-pilot/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/horizon-pilot/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/horizon-pilot/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
