@@ -135,7 +135,7 @@ ul.obj{margin:6px 0;padding-left:18px;font-size:13px;line-height:1.5}
 #hudPause i{display:block;width:6px;height:18px;border-radius:2px;background:#fff}
 #toast{position:fixed;left:50%;top:22%;transform:translateX(-50%);background:rgba(6,22,48,.88);border:1.5px solid rgba(160,230,255,.45);border-radius:14px;padding:9px 16px;font-weight:900;font-size:15px;z-index:6;pointer-events:none;opacity:0;transition:opacity .3s;max-width:90vw;text-align:center}
 #toast.show{opacity:1}#toast.sm{font-size:12px;padding:5px 11px;border-radius:10px;top:18%}
-#rotHint{position:fixed;left:calc(env(safe-area-inset-left) + 10px);top:calc(env(safe-area-inset-top) + 88px);transition:opacity .6s;transform:none;background:rgba(0,0,0,.6);padding:6px 12px;border-radius:999px;font-size:12px;font-weight:800;z-index:7;pointer-events:none;max-width:min(240px,58vw);box-sizing:border-box;text-align:center}
+#rotHint{position:fixed;left:calc(env(safe-area-inset-left) + 10px);top:calc(env(safe-area-inset-top) + 88px);transition:opacity .6s;transform:none;background:rgba(0,0,0,.6);padding:6px 12px;border-radius:999px;font-size:12px;font-weight:800;z-index:7;pointer-events:auto;cursor:pointer;touch-action:none;max-width:min(240px,58vw);box-sizing:border-box;text-align:center}
 #scrLoad{justify-content:center;background:radial-gradient(ellipse at 50% 40%,#123d6e,#030c1c)}
 .loadBar{width:240px;height:8px;border-radius:5px;background:rgba(255,255,255,.12);overflow:hidden}.loadBar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#38d6ff,#ffd23f);transition:width .2s}
 #noGL{justify-content:center;text-align:center}
@@ -274,7 +274,7 @@ ul.obj{margin:6px 0;padding-left:18px;font-size:13px;line-height:1.5}
 </div>
 <div id="toast"></div>
 <div id="safeProbe" style="position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)"></div>
-<div id="rotHint" class="hidden">↻ Landscape recommended</div>
+<div id="rotHint" class="hidden">↻ Landscape recommended ✕</div>
 <script>
 /* GA4 custom events (Games by Zaib). Safe: never throws, light (no per-frame calls, dedupe + per-page cap). */
 var ZT_N = 0, ZT_K = '', ZT_KT = 0, ZT_T = 0, ZT_S = 0, ZT_H = 0;
@@ -3295,7 +3295,7 @@ function resize() {
 }
 function syncRotHint() {
   const el = $('rotHint');
-  const show = HH > HW && GS.state === 'fly' && !GS.paused && (!S || !S.mission || S.mission.t < 6);
+  const show = HH > HW && GS.state === 'fly' && !GS.paused && !GS.rotHintOff && (!S || !S.mission || S.mission.t < 15);
   el.classList.toggle('hidden', !show);
   if (!show) return;
   readSafe();
@@ -3305,7 +3305,9 @@ function syncRotHint() {
   const r = (L.portrait ? 52 : 50) * sc, mcx = HW - r - 14 - L.safeR;
   const mcy = L.portrait ? 96 * sc + 40 * sc + r : 52 + r;
   const mmL = mcx - r, mmT = mcy - r, mmR = mcx + r, mmB = mcy + r;
-  let left = tx, top = timerBottom + 6;
+  // Heading tape (drawHUD, non-cockpit): portrait sits at 96*sc+safeT, 26*sc tall. Keep the badge below it.
+  const tapeBottom = (L.portrait ? 96 * sc + L.safeT : 12 + L.safeT) + 26 * sc;
+  let left = tx, top = Math.max(timerBottom, L.portrait ? tapeBottom : 0) + 6;
   el.style.left = left + 'px'; el.style.right = 'auto'; el.style.transform = 'none'; el.style.top = top + 'px';
   const br = el.getBoundingClientRect(), gap = 6;
   // Never intersect minimap: if overlap, keep left under timer and drop below the circle
@@ -3314,7 +3316,7 @@ function syncRotHint() {
   }
   // Never sit on top of the timer block
   const br2 = el.getBoundingClientRect();
-  if (br2.top < timerBottom + 2) el.style.top = (timerBottom + 6) + 'px';
+  if (br2.top < timerBottom + 2) el.style.top = (Math.max(timerBottom, L.portrait ? tapeBottom : 0) + 6) + 'px';
 }
 function setQuality(l) { l = clamp(l, 0, 3); if (l === Q.lvl) return; Q.lvl = l; Q.draw = QL[l].draw; if (S) S.envP = envParams(S.env.tod, S.env.weather); resize(); }
 function autoQuality(dt) {
@@ -3366,5 +3368,8 @@ function boot() {
     sim: (sec, step = 1 / 30) => { const n = Math.round(sec / step); for (let k = 0; k < n; k++) { if (GS.state !== 'fly' || !S || !S.mission || S.mission.done && !S.ac.crashed) break; updateFlight(step); } }, setQuality, pauseGame, resumeGame, quitToMenu, MISSIONS, SAVE: () => SAVE, cam: m => { R3.mode = m; S.inside = m === 1; } };
 }
 window.addEventListener('load', boot);
+
+// Landscape hint: tap to dismiss for this session (stays up to 15s otherwise)
+(function () { const el = document.getElementById('rotHint'); if (!el) return; const off = (e) => { e.preventDefault(); e.stopPropagation(); GS.rotHintOff = true; el.classList.add('hidden'); }; el.addEventListener('pointerdown', off); el.addEventListener('touchstart', off, { passive: false }); })();
 </script>
 </body></html>
