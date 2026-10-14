@@ -11,10 +11,10 @@
 <meta name="theme-color" content="#071a33">
 <meta name="description" content="Horizon Pilot by Zaib - a 3D flight game for your phone and browser. Fly 7 aircraft over a living island with mountains, cities and airports: 25 career missions, landings, aerobatics, firefighting, rescues, free flight and a daily challenge.">
 <title>Horizon Pilot by Zaib</title>
+<meta name="apple-mobile-web-app-title" content="Horizon Pilot">
 <link rel="manifest" href="/horizon-pilot/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/horizon-pilot/icons/apple-touch-icon.png">
 <script id="zg-sw">if("serviceWorker"in navigator)addEventListener("load",function(){navigator.serviceWorker.register("/horizon-pilot/sw.js",{scope:"/horizon-pilot/"}).catch(function(){})});</script>
-<meta name="apple-mobile-web-app-title" content="Horizon Pilot">
 <link rel="canonical" href="https://zaibgames.com/horizon-pilot/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Games by Zaib">
@@ -134,8 +134,8 @@ ul.obj{margin:6px 0;padding-left:18px;font-size:13px;line-height:1.5}
 #hudPause{position:fixed;top:calc(env(safe-area-inset-top) + 8px);right:calc(env(safe-area-inset-right) + 8px);width:48px;height:48px;border-radius:12px;background:rgba(6,22,48,.65);border:1.5px solid rgba(160,230,255,.45);z-index:4;display:flex;align-items:center;justify-content:center;gap:5px;cursor:pointer}
 #hudPause i{display:block;width:6px;height:18px;border-radius:2px;background:#fff}
 #toast{position:fixed;left:50%;top:22%;transform:translateX(-50%);background:rgba(6,22,48,.88);border:1.5px solid rgba(160,230,255,.45);border-radius:14px;padding:9px 16px;font-weight:900;font-size:15px;z-index:6;pointer-events:none;opacity:0;transition:opacity .3s;max-width:90vw;text-align:center}
-#toast.show{opacity:1}
-#rotHint{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 64px);transition:opacity .6s;transform:translateX(-50%);background:rgba(0,0,0,.6);padding:6px 12px;border-radius:999px;font-size:12px;font-weight:800;z-index:7;pointer-events:none}
+#toast.show{opacity:1}#toast.sm{font-size:12px;padding:5px 11px;border-radius:10px;top:18%}
+#rotHint{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 140px);transition:opacity .6s;transform:translateX(-50%);background:rgba(0,0,0,.6);padding:6px 12px;border-radius:999px;font-size:12px;font-weight:800;z-index:7;pointer-events:none}
 #scrLoad{justify-content:center;background:radial-gradient(ellipse at 50% 40%,#123d6e,#030c1c)}
 .loadBar{width:240px;height:8px;border-radius:5px;background:rgba(255,255,255,.12);overflow:hidden}.loadBar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#38d6ff,#ffd23f);transition:width .2s}
 #noGL{justify-content:center;text-align:center}
@@ -2359,7 +2359,7 @@ class MissionRun {
     return d;
   }
   update(dt) {
-    if (this.done) return; this.t += dt; const S = this.S, ac = S.ac, s = this.stage; if (!s) return;
+    if (this.done) return; this.t += (typeof GS !== 'undefined' && GS.rdt) || dt; /* real elapsed time; frame dt is clamped to 50ms */ const S = this.S, ac = S.ac, s = this.stage; if (!s) return;
     if (this.pend && this.pend.length) this.pend = this.pend.filter(p => { if (this.t >= p.at) { p.fn(); return false; } return true; });
     this.updateStunts(dt);
     if (this.def.pax && !ac.onGround) { const g = ac.gs; let pen = 0; if (g > 1.5) pen += (g - 1.5) * 25; if (g < 0.5) pen += (0.5 - g) * 30; if (Math.abs(ac.bank) > 45 * DEG) pen += 8; this.comfort = Math.max(0, this.comfort - pen * dt); }
@@ -2513,7 +2513,7 @@ function drawHUD(S, dt) {
   if (S.freeStars) drawStarMarkers(c, ac);
   // top-left objective card
   if (M) {
-    const ob = M.objective(), x = 10 + L.safeL, y = 10 + L.safeT, w = Math.min(L.portrait ? HW - x - 66 - L.safeR : 330 * sc, HW * 0.48 + (L.portrait ? HW * 0.45 : 0));
+    const ob = M.objective(), x = 10 + L.safeL, y = 10 + L.safeT, w = Math.min(L.portrait ? HW - x - 66 - L.safeR : Math.min(330 * sc, HW / 2 - Math.min(260 * sc, HW * 0.34) / 2 - x - 8), HW * 0.48 + (L.portrait ? HW * 0.45 : 0));
     glass(c, x, y, w, 50 * sc, 12 * sc);
     txt(c, ob.text, x + 12, y + 17 * sc, 14 * sc, '#fff', 'left', 900);
     c.save(); c.beginPath(); c.rect(x, y, w - 6, 50 * sc); c.clip(); txt(c, ob.sub || '', x + 12, y + 36 * sc, 11 * sc, '#bfe9ff', 'left', 600); c.restore();
@@ -2725,7 +2725,7 @@ function drawControls(c, S, L) {
 }
 /* ===== ui: menus & screens ===== */
 let toastT = 0, curCh = 0, hangarIdx = 0, briefDef = null, lastDef = null, freeSel = { plane: 'sparrow', apt: 'ZIA', tod: 'day', wx: 'clear' };
-function toast(m) { const t = $('toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2400); }
+function toast(m, ms) { const t = $('toast'); t.textContent = m; t.classList.toggle('sm', !!ms); t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), ms || 2400); }
 const SCREENS = ['scrTitle', 'scrCareer', 'scrBrief', 'scrFree', 'scrHangar', 'scrSettings', 'scrHelp', 'scrPause', 'scrResult'];
 function hideAll() { SCREENS.forEach(s => { $(s).classList.add('hidden'); $(s).classList.remove('show'); }); }
 function show(id) { hideAll(); const e = $(id); e.classList.remove('hidden'); void e.offsetWidth; e.classList.add('show'); e.scrollTop = 0; refreshCoins(); }
@@ -2949,7 +2949,7 @@ function startFlight(def) {
   if (SAVE.set.tilt) IN.tilt.autoCal = true;
   IN.stick.id = null; IN.stick.vx = IN.stick.vy = 0; IN.thr.id = null; IN.brakeBtn = false;
   syncRotHint();
-  setTimeout(() => toast(def.name + ' — ' + (S.mission.objective().text)), 300);
+  setTimeout(() => { const ot = S.mission.objective().text; toast(ot.startsWith(def.name) ? ot : def.name + ' — ' + ot, def.free ? 1500 : 0); }, 300);
   SAVE.flights++; storeSave();
   { const zm = def.daily ? 'daily' : def.free ? 'free' : 'career'; zt('game_start', { mode: zm, level: def.id, plane: S.pid || def.plane || SAVE.sel }); zt('level_start', { level: def.id, level_name: def.id, mode: zm }); if (def.tut) zt('tutorial_begin', {}); ztPlay(true); }
 }
@@ -3303,7 +3303,7 @@ function autoQuality(dt) {
 /* ---------- main loop ---------- */
 function frame(ts) {
   requestAnimationFrame(frame);
-  const t = ts / 1000; let dt = GS.last ? Math.min(0.05, t - GS.last) : 0.016; GS.last = t; if (GS.hidden || !W.ready) return;
+  const t = ts / 1000; let dt = GS.last ? Math.min(0.05, t - GS.last) : 0.016; GS.rdt = GS.last ? Math.max(0, Math.min(1, t - GS.last)) : 0.016; GS.last = t; if (GS.hidden || !W.ready) return;
   GS.time += dt; autoQuality(dt);
   if (!S) return;
   if (GS.state === 'fly' && !GS.paused) updateFlight(dt);
