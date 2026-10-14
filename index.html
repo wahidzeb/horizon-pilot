@@ -3362,7 +3362,9 @@ function boot() {
     setTimeout(() => { try { steps[i][1](); } catch (e) { console.warn(e); try { zt('js_error', { msg: String(e && e.message || e).slice(0, 90), where: 'load' }); } catch (x) { } $('loadT').textContent = 'Something went wrong. Please reload the page.'; return; } i++; run(); }, 30);
   };
   run();
-  addEventListener('resize', () => setTimeout(resize, 60));
+  // resize the canvas right away (no dark strip), then re-check once the browser settles (rotation / URL bar)
+  const onRz = () => { resize(); clearTimeout(onRz.t1); clearTimeout(onRz.t2); onRz.t1 = setTimeout(resize, 80); onRz.t2 = setTimeout(resize, 350); };
+  addEventListener('resize', onRz); addEventListener('orientationchange', onRz); if (window.visualViewport) visualViewport.addEventListener('resize', onRz);
   document.addEventListener('visibilitychange', () => { GS.hidden = document.hidden; if (document.hidden) { if (GS.state === 'fly') pauseGame(); AU.suspend(true); } else { AU.suspend(false); GS.last = 0; } });
   window.__game = { GS, get S() { return S; }, Q, setBot: v => { GS.bot = v; }, startMission: i => startFlight(MISSIONS[i]), startDef: d => startFlight(d), daily: () => startFlight(dailyMission()), free: (p, a, t, w) => startFlight(freeMission(p || 'sparrow', a || 'ZIA', t || 'day', w || 'clear')),
     sim: (sec, step = 1 / 30) => { const n = Math.round(sec / step); for (let k = 0; k < n; k++) { if (GS.state !== 'fly' || !S || !S.mission || S.mission.done && !S.ac.crashed) break; updateFlight(step); } }, setQuality, pauseGame, resumeGame, quitToMenu, MISSIONS, SAVE: () => SAVE, cam: m => { R3.mode = m; S.inside = m === 1; } };
